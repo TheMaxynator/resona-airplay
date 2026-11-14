@@ -3,7 +3,7 @@
   var token = localStorage.getItem('resona-tv-token') || '';
   var snapshot = null, interacting = false;
   var pairSection = document.getElementById('pair-section'), pairedSection = document.getElementById('paired-section');
-  function text(id, value) { document.getElementById(id).textContent = value; }
+  function text(id, value) { var element = document.getElementById(id); if (element.textContent !== value) element.textContent = value; }
   function message(value) { var node = document.getElementById('remote-message'); node.hidden = !value; node.textContent = value || ''; }
   function pairing() { pairSection.hidden = !!token; pairedSection.hidden = !token; text('connection', token ? 'Verbinden…' : 'Niet gekoppeld'); }
   async function api(route, data, method) {
@@ -33,6 +33,9 @@
       if (document.activeElement !== document.getElementById('dimming')) document.getElementById('dimming').value = Math.round(snapshot.preferences.dim * 100);
       text('dim-label', Math.round(snapshot.preferences.dim * 100) + '%');
       document.getElementById('remote-layout').value = snapshot.preferences.layout; document.getElementById('show-progress').checked = snapshot.preferences.progress;
+      document.getElementById('remote-progress-mode').value = snapshot.preferences.progressModes[snapshot.preferences.layout];
+      document.getElementById('show-waveform').checked = snapshot.preferences.waveform;
+      text('waveform-hint', track && track.waveformAvailable ? 'Vooraf berekende golfvorm die de afspeelpositie volgt.' : 'Geen golfvormgegevens voor dit nummer; de voortgangslijn blijft beschikbaar.');
       var list = document.getElementById('queue-list'); list.replaceChildren();
       snapshot.queue.forEach(function (item) { var row = document.createElement('li'), artist = document.createElement('small'); row.textContent = item.title; row.className = item.current ? 'current' : ''; artist.textContent = item.artist; row.appendChild(artist); list.appendChild(row); });
       document.getElementById('queue-empty').hidden = snapshot.queue.length > 0;
@@ -52,6 +55,11 @@
   document.getElementById('dimming').addEventListener('input', function (event) { text('dim-label', event.target.value + '%'); });
   document.getElementById('dimming').addEventListener('change', function (event) { command({ type: 'preferences', preferences: { dim: Number(event.target.value) / 100 } }); });
   document.getElementById('show-progress').addEventListener('change', function (event) { command({ type: 'preferences', preferences: { progress: event.target.checked } }); });
+  document.getElementById('remote-progress-mode').addEventListener('change', function (event) {
+    if (!snapshot) return; var modes = {}; modes[document.getElementById('remote-layout').value] = event.target.value;
+    command({ type: 'preferences', preferences: { progress: true, progressModes: modes } });
+  });
+  document.getElementById('show-waveform').addEventListener('change', function (event) { command({ type: 'preferences', preferences: { waveform: event.target.checked } }); });
   document.getElementById('disconnect').addEventListener('click', async function () { try { await api('/api/session', undefined, 'DELETE'); } catch (_) {} token = ''; localStorage.removeItem('resona-tv-token'); pairing(); message(''); });
   document.getElementById('demo').addEventListener('click', function () { command({ type: 'load', tracks: [{ id: 'resona-test', title: 'Sound & color', artist: 'Resona · testgeluid', url: location.origin + '/demo.mp3', artworkUrl: location.origin + '/demo-cover.svg', duration: 20 }] }); });
   document.getElementById('track-form').addEventListener('submit', function (event) { event.preventDefault(); command({ type: 'load', tracks: [{ id: 'manual-' + Date.now(), url: document.getElementById('stream-url').value, title: document.getElementById('track-title').value, artist: document.getElementById('track-artist').value, artworkUrl: document.getElementById('artwork-url').value }] }); });
