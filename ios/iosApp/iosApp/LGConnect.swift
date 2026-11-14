@@ -1,6 +1,97 @@
 import SwiftUI
 import AVFoundation
 import Security
+import Combine
+
+@MainActor
+enum LGArtwork {
+    static func dataURL(_ image: UIImage) -> String? {
+        guard image.size.width.isFinite, image.size.height.isFinite,
+              image.size.width > 0, image.size.height > 0 else { return nil }
+        // Renderer defaults follow the phone's screen scale. A 500-point image on a
+        // 3x iPhone was 1500px and could silently exceed the receiver's size limit.
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        for side in [500.0, 400.0, 320.0, 240.0] {
+            let size = CGSize(width: side, height: side)
+            let rendered = UIGraphicsImageRenderer(size: size, format: format).image { context in
+                UIColor.black.setFill(); context.fill(CGRect(origin: .zero, size: size))
+                let scale = min(size.width / image.size.width, size.height / image.size.height)
+                let drawn = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+                image.draw(in: CGRect(x: (size.width - drawn.width) / 2, y: (size.height - drawn.height) / 2,
+                                      width: drawn.width, height: drawn.height))
+            }
+            for quality in [0.8, 0.6, 0.4] {
+                if let jpeg = rendered.jpegData(compressionQuality: quality), jpeg.count <= 150_000 {
+                    return "data:image/jpeg;base64," + jpeg.base64EncodedString()
+                }
+            }
+        }
+        return nil
+    }
+}
+
+struct LGPreparedQueue: Decodable {
+    struct Track: Decodable {
+        let id: String; let url: String; let title: String; let artist: String
+        let artworkUrl: String?; let duration: Double
+        var payload: [String: Any] {
+            ["id": id, "url": url, "title": title, "artist": artist,
+             "artworkUrl": artworkUrl ?? "", "duration": TVPlaybackModel.validTime(duration)]
+        }
+    }
+    let sourceId: String
+    let tracks: [Track]
+    let index: Int
+    let skipped: Int
+    let truncated: Bool
+}
+
+// Foundation notifications keep the native test host independent of Compose.
+// Kotlin resolves the real queue with the signed-in account, without starting a
+// second player or exporting API credentials to the television.
+@MainActor
+private final class LGQueueRequest {
+    private var continuation: CheckedContinuation<LGPreparedQueue, Error>?
+    private var observer: NSObjectProtocol?
+    private var timeout: Task<Void, Never>?
+    private let id = UUID().uuidString
+    init(_ continuation: CheckedContinuation<LGPreparedQueue, Error>) { self.continuation = continuation }
+    static func prepare(sourceID: String, streamURL: String) async throws -> LGPreparedQueue {
+        try await withCheckedThrowingContinuation { continuation in
+            LGQueueRequest(continuation).start(sourceID: sourceID, streamURL: streamURL)
+        }
+    }
+    private func start(sourceID: String, streamURL: String) {
+        observer = NotificationCenter.default.addObserver(forName: Notification.Name("ResonaTVQueueReply"), object: nil, queue: .main) { [self] note in
+            let requestID = note.userInfo?["requestId"] as? String
+            let error = note.userInfo?["error"] as? String
+            let json = note.userInfo?["json"] as? String
+            Task { @MainActor in
+                guard requestID == id else { return }
+                if let error { finish(.failure(LGConnectError.message(error))); return }
+                do {
+                    guard let json else { throw LGConnectError.message("The queue could not be prepared.") }
+                    finish(.success(try JSONDecoder().decode(LGPreparedQueue.self, from: Data(json.utf8))))
+                } catch { finish(.failure(error)) }
+            }
+        }
+        timeout = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
+            self?.finish(.failure(LGConnectError.message("Preparing the queue took too long. Keep Resona open and try again.")))
+        }
+        NotificationCenter.default.post(name: Notification.Name("ResonaTVQueueRequest"), object: nil,
+                                        userInfo: ["requestId": id, "sourceId": sourceID, "streamUrl": streamURL])
+    }
+    private func finish(_ result: Result<LGPreparedQueue, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        if let observer { NotificationCenter.default.removeObserver(observer) }; observer = nil
+        timeout?.cancel(); timeout = nil
+        continuation.resume(with: result)
+    }
+}
 
 struct LGPlaybackSnapshot: Decodable {
     struct Track: Decodable { let id: String; let title: String; let artist: String }
@@ -13,6 +104,8 @@ struct LGPlaybackSnapshot: Decodable {
     let duration: Double
     let error: String
     let preferences: Preferences
+    let index: Int?
+    let queue: [Track]?
 }
 
 enum LGConnectError: LocalizedError {
@@ -38,8 +131,16 @@ final class LGConnectClient: ObservableObject {
     private weak var castPlayer: AVPlayer?
     private weak var castItem: AVPlayerItem?
     private var rateObservation: NSKeyValueObservation?
+    private var artworkObservation: AnyCancellable?
+    private var artworkTask: Task<Void, Never>?
+    private var artworkRevision = 0
+    private var sentArtwork: UIImage?
+    private let prepareQueue: (String, String) async throws -> LGPreparedQueue
 
-    init(session: URLSession = .shared) { self.session = session }
+    init(session: URLSession = .shared, prepareQueue: ((String, String) async throws -> LGPreparedQueue)? = nil) {
+        self.session = session
+        self.prepareQueue = prepareQueue ?? { try await LGQueueRequest.prepare(sourceID: $0, streamURL: $1) }
+    }
     deinit { timer?.invalidate() }
 
     static func receiverURL(_ input: String) throws -> URL {
@@ -158,24 +259,25 @@ final class LGConnectClient: ObservableObject {
               ["https", "http"].contains(scheme) else {
             message = "Choose an online track. Files stored only on the iPhone cannot be sent directly to the TV."; return
         }
-        busy = true; message = "Preparing the track on your LG…"
+        busy = true; message = "Preparing your queue for LG. Keep Resona open…"
         var pausedHere = false, wasPlaying = false
         defer { busy = false }
         do {
-            var track: [String: Any] = ["id": UUID().uuidString, "url": asset.url.absoluteString,
-                                        "title": model.title, "artist": model.artist, "duration": TVPlaybackModel.validTime(model.duration)]
-            if let art = model.artwork {
-                let size = CGSize(width: 500, height: 500)
-                let scaled = UIGraphicsImageRenderer(size: size).image { _ in
-                    let scale = min(size.width / art.size.width, size.height / art.size.height)
-                    let drawn = CGSize(width: art.size.width * scale, height: art.size.height * scale)
-                    art.draw(in: CGRect(x: (500 - drawn.width) / 2, y: (500 - drawn.height) / 2, width: drawn.width, height: drawn.height))
-                }
-                if let jpeg = scaled.jpegData(compressionQuality: 0.7), jpeg.count < 150000 {
-                    track["artworkUrl"] = "data:image/jpeg;base64," + jpeg.base64EncodedString()
-                }
+            let sourceID = model.trackID
+            let queue = try await prepareQueue(sourceID, asset.url.absoluteString)
+            guard player.currentItem === item, model.trackID == sourceID,
+                  queue.sourceId == sourceID, !queue.tracks.isEmpty, queue.tracks.count <= 100,
+                  queue.tracks.indices.contains(queue.index) else {
+                throw LGConnectError.message("The iPhone queue changed. Send it again.")
             }
-            let loaded: CommandReply = try await request("/api/command", body: ["type": "load", "tracks": [track], "autoplay": false])
+            var tracks = queue.tracks.map(\.payload)
+            let trackID = queue.tracks[queue.index].id
+            let art = model.artwork
+            let encoded = art.flatMap(LGArtwork.dataURL)
+            if let encoded { tracks[queue.index]["artworkUrl"] = encoded }
+            else if !model.artworkURL.isEmpty { tracks[queue.index]["artworkUrl"] = model.artworkURL }
+            message = "Preparing \(tracks.count) track(s) on your LG…"
+            let loaded: CommandReply = try await request("/api/command", body: ["type": "load", "tracks": tracks, "index": queue.index, "autoplay": false])
             try await waitFor(loaded.generation, playing: false)
             guard player.currentItem === item else { throw LGConnectError.message("The iPhone track changed. Send the new track again.") }
             wasPlaying = player.rate > 0
@@ -186,11 +288,21 @@ final class LGConnectClient: ObservableObject {
             try await waitFor(loaded.generation, playing: true)
             guard player.currentItem === item && player.rate == 0 else { throw LGConnectError.message("Playback changed on your iPhone. Send the track again.") }
             castPlayer = player; castItem = item; isCasting = true
+            artworkObservation?.cancel(); artworkTask?.cancel(); artworkRevision = 0
+            sentArtwork = encoded == nil ? nil : art
+            artworkObservation = model.$artwork.sink { [weak self, weak model, weak item] image in
+                guard let self, let model, let item, self.isCasting,
+                      self.castItem === item, self.castPlayer?.currentItem === item,
+                      model.player?.currentItem === item else { return }
+                self.updateArtwork(image, generation: loaded.generation, trackID: trackID)
+            }
             rateObservation = player.observe(\.rate, options: [.new]) { [weak self] player, _ in
                 guard player.rate > 0 else { return }
                 Task { @MainActor in await self?.refresh() }
             }
-            message = "Playing on your LG. Use the controls below or your TV remote."
+            message = "Playing on your LG. \(tracks.count) track(s) in the TV queue."
+            if queue.skipped > 0 { message += " \(queue.skipped) unavailable track(s) skipped." }
+            if queue.truncated { message += " The TV queue contains up to 100 tracks around the selected track." }
         } catch {
             if pausedHere {
                 let _: CommandReply? = try? await request("/api/command", body: ["type": "pause"])
@@ -200,11 +312,28 @@ final class LGConnectClient: ObservableObject {
         }
     }
 
+    private func updateArtwork(_ image: UIImage?, generation: Int, trackID: String) {
+        // A nil image is usually an in-flight download; keep the HTTP cover until
+        // the real image arrives. Explicit cover clearing is handled on load.
+        guard let image, image !== sentArtwork, let encoded = LGArtwork.dataURL(image) else { return }
+        artworkTask?.cancel(); artworkRevision += 1
+        let revision = artworkRevision
+        artworkTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let _: CommandReply = try await request("/api/command", body: ["type": "artwork", "generation": generation,
+                    "trackId": trackID, "artworkRevision": revision, "artworkUrl": encoded])
+                if !Task.isCancelled { sentArtwork = image }
+            } catch { /* The remote URL remains available; audio must keep playing. */ }
+        }
+    }
+
     func disconnect() async {
         guard !busy else { return }
         let _: AcceptedReply? = try? await request("/api/session", method: "DELETE")
         if let baseURL { removeToken(baseURL) }
         token = ""; paired = false; snapshot = nil; isCasting = false; rateObservation = nil
+        artworkObservation?.cancel(); artworkObservation = nil; artworkTask?.cancel(); artworkTask = nil; sentArtwork = nil
         message = "Disconnected. Music already playing on the TV continues there."
     }
     private func keychainQuery(_ url: URL) -> [String: Any] {
@@ -241,7 +370,7 @@ struct LGConnectSettings: View {
                 Button("Connect to LG") { Task { await client.pair() } }.disabled(client.busy)
             } else {
                 if let track = client.snapshot?.track { LabeledContent("Playing on LG", value: track.title) }
-                Button("Send current track to LG") { Task { await client.sendCurrentTrack(model) } }
+                Button("Send queue to LG") { Task { await client.sendCurrentTrack(model) } }
                     .disabled(client.busy || !model.hasTrack)
                 HStack {
                     Button("Previous") { Task { await client.command("previous") } }
@@ -251,7 +380,11 @@ struct LGConnectSettings: View {
                     }
                     Spacer()
                     Button("Next") { Task { await client.command("next") } }
+                        .disabled((client.snapshot?.index ?? 0) + 1 >= (client.snapshot?.queue?.count ?? 0))
                 }.buttonStyle(.borderless).disabled(client.busy || client.snapshot?.track == nil)
+                if let remote = client.snapshot, let index = remote.index, let count = remote.queue?.count, count > 0 {
+                    LabeledContent("TV queue", value: "\(index + 1) / \(count)")
+                }
                 if let remote = client.snapshot, remote.duration > 0 {
                     Slider(value: $position, in: 0...max(1, remote.duration), onEditingChanged: { editing in
                         seeking = editing
@@ -267,7 +400,7 @@ struct LGConnectSettings: View {
             }
             if client.busy { ProgressView() }
             Text(client.message).font(.footnote).foregroundColor(.secondary)
-            Text("Uses the separate Resona TV webOS app. Sends one online track at a time. A queue imported on the TV can continue independently.")
+            Text("Sends a snapshot of your Resona queue, up to 100 online tracks. Next, Previous and automatic advancement work on the TV. Send again after changing the iPhone queue. Keep Resona open while preparing it.")
                 .font(.footnote).foregroundColor(.secondary)
         }
         .onAppear { client.start() }
