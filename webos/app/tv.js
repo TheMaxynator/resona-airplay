@@ -8,14 +8,16 @@
   var messages = document.getElementById('message'), pairing = document.getElementById('pairing');
   var toolbarTimer, pairRequested = false, errorTimer;
   var layouts = ['cinema', 'gallery', 'ambient', 'night'];
-  function text(id, value) { document.getElementById(id).textContent = value; }
+  var appearance = null, appearanceKey = '', knownTrack = '', lastRatio = -1;
+  var waveform = new ResonaWaveform(document.getElementById('waveform-track'));
+  function text(id, value) { var element = document.getElementById(id); if (element.textContent !== value) element.textContent = value; }
   function time(value) { value = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0; return (value >= 3600 ? Math.floor(value / 3600) + ':' + String(Math.floor(value / 60) % 60).padStart(2, '0') : Math.floor(value / 60)) + ':' + String(value % 60).padStart(2, '0'); }
   async function api(route, data) {
     var response = await fetch(route, { method: data === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) });
     var result = await response.json(); if (!response.ok) throw new Error(result.error || 'Verbinding met de ontvanger verbroken.'); return result;
   }
   function message(value) { clearTimeout(errorTimer); messages.hidden = !value; messages.textContent = value || ''; }
-  function controls() { document.body.classList.add('controls-visible'); clearTimeout(toolbarTimer); toolbarTimer = setTimeout(function () { if (document.getElementById('toolbar').contains(document.activeElement)) document.activeElement.blur(); document.body.classList.remove('controls-visible'); }, 5000); }
+  function controls() { document.body.classList.add('controls-visible'); progress(); clearTimeout(toolbarTimer); toolbarTimer = setTimeout(function () { if (document.getElementById('toolbar').contains(document.activeElement)) document.activeElement.blur(); document.body.classList.remove('controls-visible'); }, 5000); }
   function colorWash(image, source, retry) {
     try {
       var canvas = document.createElement('canvas'); canvas.width = canvas.height = 32;
@@ -75,16 +77,28 @@
     else image.removeAttribute('src');
   }
   function preferences(value) {
+    var key = JSON.stringify(value) + '|' + generation;
+    if (key === appearanceKey) return; appearanceKey = key; appearance = value;
     document.body.dataset.layout = value.layout;
     document.body.style.setProperty('--dim', value.dim);
     document.getElementById('progress-area').hidden = !value.progress || !current;
+    var mode = value.progressModes && value.progressModes[value.layout] || 'always';
+    document.body.dataset.progressMode = value.progress ? mode : 'hidden';
+    text('progress-mode', 'Balk: ' + (!value.progress ? 'uit' : mode === 'auto' ? 'auto' : 'altijd'));
+    text('waveform-toggle', 'Golfvorm: ' + (value.waveform ? 'aan' : 'uit'));
+    waveform.configure(current, value.progress && value.waveform);
     text('layout', value.layout.charAt(0).toUpperCase() + value.layout.slice(1));
+    progress();
   }
   function progress() {
+    if (document.hidden || document.getElementById('progress-area').hidden ||
+        (document.body.dataset.progressMode === 'auto' && !document.body.classList.contains('controls-visible'))) return;
     var duration = Number.isFinite(audio.duration) ? audio.duration : (current && current.duration) || 0;
     var elapsed = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
     text('elapsed', time(elapsed)); text('duration', duration > 0 ? time(duration) : 'LIVE');
-    document.getElementById('progress-fill').style.width = (duration > 0 ? Math.min(100, Math.max(0, elapsed / duration * 100)) : 0) + '%';
+    var ratio = duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 0;
+    if (ratio !== lastRatio) { document.getElementById('progress-fill').style.transform = 'scaleX(' + ratio + ')'; lastRatio = ratio; }
+    waveform.progress(ratio);
   }
   async function report(state, error) {
     if (preview || !current || reporting) return;
@@ -126,7 +140,7 @@
   }
   async function poll() {
     try {
-      var snapshot = await api('/api/display?after=' + sequence); latest = snapshot;
+      var snapshot = await api('/api/display?after=' + sequence + '&known=' + encodeURIComponent(knownTrack)); latest = snapshot;
       showPairing(snapshot);
       if (snapshot.generation !== generation) {
         if (snapshot.track) load({ generation: snapshot.generation, track: snapshot.track, position: snapshot.position, autoplay: snapshot.desiredPlaying });
@@ -135,11 +149,12 @@
       } else {
         snapshot.commands.forEach(function (command) { if (command.sequence > sequence) { execute(command); sequence = command.sequence; } });
         // State is authoritative if the bounded command history was overtaken.
-        if (current && snapshot.track && current.id === snapshot.track.id && current.artworkUrl !== snapshot.track.artworkUrl) {
+        if (current && snapshot.track && current.id === snapshot.track.id && snapshot.track.artworkUrl !== undefined && current.artworkUrl !== snapshot.track.artworkUrl) {
           current.artworkUrl = snapshot.track.artworkUrl; paint(current);
         }
       }
       preferences(snapshot.preferences);
+      knownTrack = snapshot.trackVersion || '';
     } catch (_) { message('De ontvanger is niet bereikbaar. Open Resona TV opnieuw.'); }
     setTimeout(poll, 550);
   }
@@ -162,6 +177,16 @@
   document.getElementById('next').addEventListener('click', function () { command({ type: 'next' }); });
   document.getElementById('layout').addEventListener('click', function () { var next = layouts[(layouts.indexOf(document.body.dataset.layout) + 1) % layouts.length]; if (preview) preferences({ layout: next, dim: .48, progress: true }); else command({ type: 'preferences', preferences: { layout: next } }); });
   document.getElementById('pair').addEventListener('click', function () { pairRequested = !pairRequested; if (latest) showPairing(latest); });
+  document.getElementById('progress-mode').addEventListener('click', function () {
+    var mode = document.body.dataset.progressMode === 'always' ? 'auto' : 'always', modes = {};
+    modes[document.body.dataset.layout] = mode;
+    if (preview) { var value = Object.assign({}, appearance, { progress: true, progressModes: Object.assign({}, appearance.progressModes, modes) }); preferences(value); }
+    else command({ type: 'preferences', preferences: { progress: true, progressModes: modes } });
+  });
+  document.getElementById('waveform-toggle').addEventListener('click', function () {
+    if (preview) preferences(Object.assign({}, appearance, { waveform: !appearance.waveform }));
+    else command({ type: 'preferences', preferences: { waveform: !appearance.waveform } });
+  });
   document.addEventListener('mousemove', controls);
   document.addEventListener('keydown', function (event) {
     controls();
@@ -175,10 +200,13 @@
     if ((event.key === 'Enter' || event.key === ' ') && document.activeElement === document.body) { event.preventDefault(); document.getElementById('toggle').click(); }
     if (event.keyCode === 415) command({ type: 'play' }); if (event.keyCode === 19) command({ type: 'pause' });
   });
-  document.addEventListener('visibilitychange', function () { if (document.hidden && current) { wantPlay = false; audio.pause(); command({ type: 'pause' }); report('paused'); } });
+  document.addEventListener('visibilitychange', function () {
+    if (appearance) waveform.configure(current, appearance.progress && appearance.waveform);
+    if (document.hidden && current) { wantPlay = false; audio.pause(); command({ type: 'pause' }); report('paused'); }
+  });
   setInterval(function () { if (preview) return; if (current && ready) report(audio.ended ? 'ended' : audio.paused ? 'paused' : 'playing'); progress(); }, 1000);
   setInterval(function () { var shift = Math.round(Math.random() * 10) - 5; document.getElementById('composition').style.transform = 'translate(' + shift + 'px,' + (-shift) + 'px)'; }, 60000);
   paint(null);
-  if (preview) { generation = 0; current = { id: 'preview', title: 'Night Bloom', artist: 'Resona · ontwerpvoorbeeld', artworkUrl: 'demo-cover.svg', duration: 248 }; paint(current); pairing.hidden = true; preferences({ layout: 'cinema', dim: .48, progress: true }); text('elapsed', '1:31'); text('duration', '4:08'); document.getElementById('progress-fill').style.width = '36.7%'; controls(); }
+  if (preview) { generation = 0; current = { id: 'preview', title: 'Night Bloom', artist: 'Resona · ontwerpvoorbeeld', artworkUrl: 'demo-cover.svg', duration: 248 }; paint(current); pairing.hidden = true; preferences({ layout: 'cinema', dim: .48, progress: true }); text('elapsed', '1:31'); text('duration', '4:08'); document.getElementById('progress-fill').style.transform = 'scaleX(.367)'; controls(); }
   else poll();
 }());
