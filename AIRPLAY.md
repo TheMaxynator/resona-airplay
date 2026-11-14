@@ -28,7 +28,7 @@ Apple Music, Spotify and Plexamp are proprietary; their current internal AirPlay
 
 On iOS 27, external display content must be registered through `UISceneAccessory`; the fork registers it from the phone view controller. The documented Objective-C entry points are resolved at runtime so upstream's Xcode 26 toolchain can build the application. iOS 16–26 use the scene-manifest path. The registration is disabled in audio-only mode. This runtime path still requires testing on a real iOS 27 device.
 
-On older iOS releases, stopping the custom view can return to ordinary screen mirroring. Apps cannot silently select an AirPlay receiver or turn the user's Screen Mirroring off; the settings explain the required Control Center step. LiveContainer can change scene ownership and is not a substitute for a direct-install test.
+On older iOS releases, stopping the custom view can return to ordinary screen mirroring. Apps cannot silently select an AirPlay receiver or turn the user's Screen Mirroring off; the settings explain the required Control Center step. An open LiveContainer report, [issue #1694](https://github.com/LiveContainer/LiveContainer/issues/1694), describes unavailable external scenes and black AirPlay output on iOS 27. This is a community reproduction, not a confirmed diagnosis on the user's iOS 27.0.1/LG setup. Test the same IPA directly through SideStore before attributing a black screen to Resona.
 
 ## Artwork handling
 
@@ -65,3 +65,5 @@ For the hardware test, record the iPhone installation method (direct sideload or
 - SoundCloud: [Cast to devices](https://help.soundcloud.com/hc/en-us/articles/360049227333-Cast-to-devices)
 - [UxPlay receiver](https://github.com/FDH2/UxPlay)
 - [Shairport metadata display](https://github.com/AlainGourves/shairport-metadata-display)
+
+- LiveContainer: [external display/AirPlay report #1694](https://github.com/LiveContainer/LiveContainer/issues/1694) (user report, not a maintainer-confirmed fix)
