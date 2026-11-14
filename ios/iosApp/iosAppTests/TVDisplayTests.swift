@@ -74,6 +74,9 @@ final class TVDisplayTests: XCTestCase {
         model.outputMode = .audio
         XCTAssertTrue(player.usesExternalPlaybackWhileExternalScreenIsActive)
         XCTAssertEqual(UIApplication.shared.isIdleTimerDisabled, idleTimer)
+        model.outputMode = .lg
+        XCTAssertTrue(player.usesExternalPlaybackWhileExternalScreenIsActive)
+        XCTAssertEqual(UIApplication.shared.isIdleTimerDisabled, idleTimer)
         model.outputMode = .display
         XCTAssertFalse(player.usesExternalPlaybackWhileExternalScreenIsActive)
         model.displayDisconnected("test-display")
