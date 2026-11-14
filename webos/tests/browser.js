@@ -43,6 +43,7 @@ const { makeReceiver } = require('../app/receiver-server');
     for (const layout of ['cinema', 'gallery', 'ambient', 'night']) {
       await phone.getByLabel('Ontwerp', { exact: true }).selectOption(layout);
       await tv.waitForFunction(value => document.body.dataset.layout === value, layout);
+      await tv.waitForFunction(value => Math.abs(Number(getComputedStyle(document.getElementById('backdrop')).opacity) - (value === 'night' ? 0.52 * 0.28 : 0.52)) < 0.01, layout);
       await tv.screenshot({ path: path.join(output, layout + '.png') });
     }
     for (const width of [320, 390, 768]) {
