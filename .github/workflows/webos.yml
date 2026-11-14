@@ -26,6 +26,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Receiver and pairing tests
         run: npm test
+      - name: Check the webOS 23 Node runtime
+        run: npm exec --yes --package=node@12.22.12 -- node tests/node12-smoke.js
       - name: Install test browser
         run: npx playwright install --with-deps chromium
       - name: Browser playback and layout tests
