@@ -7,6 +7,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { makeReceiver } = require('../app/receiver-server');
 const { peaks, allowed } = require('../app/waveform');
+const { parseChapters } = require('../app/session');
 
 async function fixture(t, extra) {
   const receiver = makeReceiver(extra);
@@ -121,8 +122,8 @@ test('persists display preferences separately from hashed trusted devices, witho
   await f.request('/api/command', { type: 'load', tracks }, token);
   assert.equal((await f.request('/api/command', { type: 'preferences', preferences: { layout: 'night', dim: 0.8, progress: false } }, token)).status, 200);
   const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'preferences.json')));
-  assert.deepEqual(saved, { layout: 'night', dim: 0.8, progress: false, waveform: false,
-    progressModes: { cinema: 'always', gallery: 'always', ambient: 'always', night: 'always' } });
+  assert.deepEqual(saved, { layout: 'night', dim: 0.8, progress: false, waveform: false, upNext: true,
+    progressModes: { cinema: 'always', gallery: 'always', ambient: 'always', night: 'always', studio: 'always' } });
   assert.deepEqual(fs.readdirSync(dataDir), ['paired-devices.json', 'preferences.json']);
   const devices = fs.readFileSync(path.join(dataDir, 'paired-devices.json'), 'utf8');
   assert.ok(!devices.includes(token)); assert.ok(!devices.includes(tracks[0].url));
@@ -175,7 +176,7 @@ test('an app update replaces only its own helper on the requested port', { timeo
   const original = await start(target), unrelated = await start(other);
   const exited = new Promise(resolve => original.once('exit', resolve));
   await start(target, true); await exited;
-  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.2.0');
+  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.3.0');
   assert.equal((await fetch('http://127.0.0.1:' + other + '/health')).status, 200);
   assert.equal(unrelated.exitCode, null); assert.equal(unrelated.signalCode, null);
 });
@@ -318,4 +319,124 @@ test('refreshing a signed current stream preserves its queue slot and position w
   assert.equal(display.track.url, 'https://example.org/refreshed.mp3'); assert.equal(display.queue[1].id, 'second');
   assert.equal(display.generation, before.generation + 1);
   assert.equal((await f.request('/api/command', refresh, token)).status, 409);
+});
+
+test('chapter parsing accepts labelled set timestamps, sorts/deduplicates and ignores invalid or incidental times', () => {
+  const chapters = parseChapters('Tracklist\n[00:00] Intro\n01:02 - Björk – Jóga\n2. 1:03:04 | Finale\nDuplicate [01:02]\nhttps://example.org/01:04\n10:99 Bad\n1:99:00 Invalid\n80:00 Beyond duration', 4000);
+  assert.deepEqual(chapters, [{ position: 0, title: 'Intro' }, { position: 62, title: 'Björk – Jóga' }, { position: 3784, title: 'Finale' }]);
+  assert.deepEqual(parseChapters('Doors open 19:00\nRegular description without a tracklist', 86400), []);
+  assert.deepEqual(parseChapters('00:00 Intro\n00:10 <img src=x onerror=alert(1)> Safe title', 60)[1], { position: 10, title: 'Safe title' });
+  assert.ok(parseChapters(Array.from({ length: 250 }, (_, i) => Math.floor(i / 60) + ':' + String(i % 60).padStart(2, '0') + ' Item ' + i).join('\n'), 1000).length <= 100);
+});
+
+test('chapter selection is generation guarded and seeks without replacing the decoder or queue', async t => {
+  const f = await fixture(t), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks: [Object.assign({}, tracks[0], { chapterText: '00:00 Intro\n00:25 Main set\n00:50 Finale' }), tracks[1]], position: 7 }, token);
+  const before = await f.display(), guard = { generation: before.generation, trackId: before.track.id };
+  const selected = await f.request('/api/command', Object.assign({ type: 'chapter', index: 1 }, guard), token);
+  assert.equal(selected.status, 200);
+  const state = await f.display(); assert.equal(state.position, 25); assert.equal(state.generation, before.generation);
+  assert.equal(state.queueRevision, before.queueRevision); assert.equal(state.commands.at(-1).type, 'seek');
+  assert.equal((await f.request('/api/state?compact=1', undefined, token)).data.track.chapters[1].title, 'Main set');
+  assert.equal((await f.request('/api/command', Object.assign({ type: 'chapter', index: 8 }, guard), token)).status, 400);
+  await f.request('/api/command', { type: 'next' }, token);
+  assert.equal((await f.request('/api/command', Object.assign({ type: 'chapter', index: 0 }, guard), token)).status, 409);
+  assert.equal(f.receiver.snapshot().position, 0);
+});
+
+test('bookmarks and resume survive receiver restarts and new queue slots, without persisting URLs or tokens', async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resona-history-')); t.after(() => fs.rmSync(dataDir, { force: true, recursive: true }));
+  const f = await fixture(t, { dataDir }), token = await f.pair();
+  const item = Object.assign({}, tracks[0], { sourceId: '42' });
+  await f.request('/api/command', { type: 'load', tracks: [item] }, token);
+  const guard = { generation: f.receiver.snapshot().generation, trackId: item.id };
+  await f.request('/api/display/report', Object.assign({ state: 'paused', position: 27, duration: 60 }, guard), f.receiver.getDisplayToken());
+  assert.equal((await f.request('/api/command', Object.assign({ type: 'bookmark-add', label: 'Favourite transition' }, guard), token)).status, 200);
+  await f.request('/api/command', Object.assign({ type: 'bookmark-add' }, guard), token);
+  assert.equal(f.receiver.snapshot().session.bookmarks.length, 1, 'the same moment is not stored twice');
+  const bytes = fs.readFileSync(path.join(dataDir, 'listening-history.json'), 'utf8');
+  assert.ok(!bytes.includes(item.url)); assert.ok(!bytes.includes(token)); assert.ok(!bytes.includes(item.title));
+  assert.equal(fs.statSync(path.join(dataDir, 'listening-history.json')).mode & 511, 384);
+  const restarted = await fixture(t, { dataDir }); await restarted.display();
+  await restarted.request('/api/command', { type: 'load', tracks: [Object.assign({}, item, { id: 'new-slot' })], autoplay: false }, token);
+  let state = restarted.receiver.snapshot();
+  assert.equal(state.session.resumePosition, 27); assert.equal(state.session.bookmarks[0].label, 'Favourite transition');
+  const secondGuard = { generation: state.generation, trackId: 'new-slot' }, id = state.session.bookmarks[0].id;
+  await restarted.request('/api/command', Object.assign({ type: 'resume' }, secondGuard), token);
+  assert.equal(restarted.receiver.snapshot().position, 27);
+  await restarted.request('/api/command', { type: 'seek', position: 5 }, token);
+  await restarted.request('/api/command', Object.assign({ type: 'bookmark-play', id }, secondGuard), token);
+  assert.equal(restarted.receiver.snapshot().position, 27);
+  await restarted.request('/api/command', Object.assign({ type: 'bookmark-remove', id }, secondGuard), token);
+  assert.equal(restarted.receiver.snapshot().session.bookmarks.length, 0);
+  assert.equal((await restarted.request('/api/command', Object.assign({ type: 'bookmark-add' }, guard), token)).status, 409);
+});
+
+test('removing a playing slot never assigns its listening position to the next track', async t => {
+  const f = await fixture(t), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks: [Object.assign({}, tracks[0], { sourceId: '42' }), Object.assign({}, tracks[1], { sourceId: '43' })], position: 27 }, token);
+  const before = f.receiver.snapshot();
+  await f.request('/api/command', { type: 'queue-remove', trackId: 'first', queueRevision: before.queueRevision }, token);
+  const state = f.receiver.snapshot(); assert.equal(state.track.sourceId, '43'); assert.equal(state.session.resumePosition, 0);
+});
+
+test('sleep timer pauses on its deadline and an end-event racing that deadline cannot start another track', async t => {
+  let now = Date.now(); const f = await fixture(t, { now: () => now }), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks }, token);
+  await f.request('/api/command', { type: 'sleep', mode: 'minutes', minutes: 1 }, token);
+  const before = f.receiver.snapshot(); assert.equal(before.session.sleepTimer.deadline, now + 60000);
+  now += 60001;
+  await f.request('/api/display/report', { generation: before.generation, trackId: 'first', state: 'ended', position: 60, duration: 60 }, f.receiver.getDisplayToken());
+  let state = f.receiver.snapshot(); assert.equal(state.index, 0); assert.equal(state.desiredPlaying, false); assert.equal(state.session.sleepTimer, null);
+  assert.equal(state.commands, undefined);
+  assert.equal((await f.display()).commands.at(-1).type, 'pause');
+  await f.request('/api/command', { type: 'play' }, token);
+  await f.request('/api/display/report', { generation: before.generation, trackId: 'first', state: 'ended', position: 60, duration: 60 }, f.receiver.getDisplayToken());
+  assert.equal(f.receiver.snapshot().index, 1);
+});
+
+test('end-of-track sleep prevents auto-advance, cancels on manual track changes and validates atomically', async t => {
+  const f = await fixture(t), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks }, token);
+  await f.request('/api/command', { type: 'sleep', mode: 'end-track' }, token);
+  const before = f.receiver.snapshot();
+  for (const patch of [{ mode: 'minutes', minutes: -1 }, { mode: 'minutes', minutes: 0.5 }, { mode: 'minutes', minutes: 181 }, { mode: 'invalid' }]) {
+    assert.equal((await f.request('/api/command', Object.assign({ type: 'sleep' }, patch), token)).status, 400);
+    assert.deepEqual(f.receiver.snapshot().session.sleepTimer, before.session.sleepTimer);
+  }
+  await f.request('/api/display/report', { generation: before.generation, trackId: 'first', state: 'ended', position: 60, duration: 60 }, f.receiver.getDisplayToken());
+  assert.equal(f.receiver.snapshot().index, 0); assert.equal(f.receiver.snapshot().desiredPlaying, false);
+  await f.request('/api/command', { type: 'sleep', mode: 'end-track' }, token);
+  await f.request('/api/command', { type: 'next' }, token);
+  assert.equal(f.receiver.snapshot().session.sleepTimer, null);
+});
+
+test('appearance presets reuse the current decoder and preserve progress choices in other layouts', async t => {
+  const f = await fixture(t), token = await f.pair(); assert.equal(f.receiver.snapshot().preferences.layout, 'gallery');
+  await f.request('/api/command', { type: 'load', tracks, position: 17 }, token);
+  await f.request('/api/command', { type: 'preferences', preferences: { progressModes: { cinema: 'auto' } } }, token);
+  const before = f.receiver.snapshot();
+  await f.request('/api/command', { type: 'preset', name: 'studio' }, token);
+  const state = f.receiver.snapshot(); assert.equal(state.preferences.layout, 'studio'); assert.equal(state.preferences.waveform, true);
+  assert.equal(state.preferences.progressModes.cinema, 'auto'); assert.equal(state.generation, before.generation); assert.equal(state.position, 17);
+  for (const name of ['missing', '__proto__', 'constructor']) assert.equal((await f.request('/api/command', { type: 'preset', name }, token)).status, 400);
+});
+
+test('history checkpoints are throttled during playback, forced on pause and bounded to 20 bookmarks', async t => {
+  let now = Date.now(); const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resona-checkpoints-')); t.after(() => fs.rmSync(dataDir, { force: true, recursive: true }));
+  const f = await fixture(t, { now: () => now, dataDir }), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks }, token);
+  const guard = { generation: f.receiver.snapshot().generation, trackId: 'first' };
+  const report = (state, position) => f.request('/api/display/report', Object.assign({ state, position, duration: 60 }, guard), f.receiver.getDisplayToken());
+  await report('playing', 10); now += 1000; await report('playing', 11);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'listening-history.json')))[0].position, 10);
+  await report('paused', 11);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'listening-history.json')))[0].position, 11);
+  for (let i = 0; i < 20; i++) {
+    await f.request('/api/command', { type: 'seek', position: i + 1 }, token);
+    assert.equal((await f.request('/api/command', Object.assign({ type: 'bookmark-add' }, guard), token)).status, 200);
+  }
+  await f.request('/api/command', { type: 'seek', position: 30 }, token);
+  assert.equal((await f.request('/api/command', Object.assign({ type: 'bookmark-add' }, guard), token)).status, 400);
+  assert.equal(f.receiver.snapshot().session.bookmarks.length, 20);
 });
