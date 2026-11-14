@@ -35,10 +35,10 @@ The iPhone bundle ID remains `com.themaxynator.resona.airplay`, so this updates 
 ## Verified and pending
 
 - The complete iPhone device build, native typechecking and **eight** native simulator tests passed in [the LG Connect build](https://github.com/TheMaxynator/resona-airplay/actions/runs/43590334733).
-- The LG receiver's **thirteen** protocol/security/lifecycle tests, Node 12 compatibility and browser playback tests passed in [the release workflow](https://github.com/TheMaxynator/resona-airplay/actions/runs/43590334730).
+- The LG receiver's **thirteen** protocol/security/lifecycle tests, Node 12 compatibility and browser playback tests passed in [the release workflow](https://github.com/TheMaxynator/resona-airplay/actions/runs/43593119953).
 - Browser checks cover real MP3 decoding, PIN pairing, pause/seek, all four layouts, widths 320/390/768, safe text rendering and queue advancement after the phone closes. Layout images were visually inspected.
 - The IPA archive, version, arm64 executable, external scene declaration and local-network settings were checked after download. The public Homebrew JSON, release manifest and package checksum are verified separately.
-- The user confirmed pairing, playback, seeking, pause/resume and layout selection on an LG G3/webOS 23 using 0.1.0/2.0.2, and reported the artwork and native-queue issues addressed here. The 0.1.1/2.0.3 fixes still need a hardware retest. LG's gallery screensaver policy can dim and take over the image after 30 minutes; indefinite artwork display is not promised. The first real device test must check bootstrap, SoundCloud/HLS compatibility, phone locking and remote keys.
+- The user confirmed pairing, playback, seeking, pause/resume and layout selection on an LG G3/webOS 23 using 0.1.0/2.0.2, and reported the artwork and native-queue issues addressed here. The 0.1.2/2.0.3 fixes still need a hardware retest. LG's gallery screensaver policy can dim and take over the image after 30 minutes; indefinite artwork display is not promised. The first real device test must check bootstrap, SoundCloud/HLS compatibility, phone locking and remote keys.
 
 The [AirPlay research and hardware checklist](AIRPLAY.md) records platform limits. LiveContainer has an [open iOS 27 external-display report](https://github.com/LiveContainer/LiveContainer/issues/1694); a directly signed installation is the reference setup for testing the iPhone's Screen Mirroring mode.
 
