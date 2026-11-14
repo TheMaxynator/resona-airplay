@@ -22,11 +22,11 @@ Background dimming and progress visibility are adjustable and remembered. Artwor
 
 ## Build and testing
 
-The **AirPlay iOS** workflow typechecks the native display, builds an unsigned `Resona-TV-2.0.1.ipa`, then runs iOS Simulator tests for metadata changes, mode transitions, display lifecycle, invalid progress values and four layout renders. Download the IPA from a successful workflow run's artifacts and sign it using your usual sideloading method.
+The **AirPlay iOS** workflow typechecks the native display and runs iOS Simulator tests for metadata changes, mode transitions, display lifecycle, invalid progress values and four layout renders. These tests use a disposable native host containing the exact production TV source and tests. It then compiles the complete Kotlin/Compose application into an unsigned debug `Resona-TV-2.0.1.ipa` for device testing. Download the IPA from a successful workflow run's artifacts and sign it using your usual sideloading method. Debug configuration keeps the first hardware test build practical; it is not an optimized release build.
 
 The test app has a separate bundle identifier (`com.themaxynator.resona.airplay`) and display name **Resona TV**. It installs alongside upstream and starts with its own app data. Its build number is 18; upstream v2.0 is build 17.
 
-A simulator build cannot verify a physical LG AirPlay receiver. The [research, limitations and device test checklist](AIRPLAY.md) distinguish implementation from verified hardware behavior. LiveContainer has an [open iOS 27 external-display report](https://github.com/LiveContainer/LiveContainer/issues/1694). This fork has not been physically tested there; a directly sideloaded installation is the reference configuration.
+The four native tests passed with zero failures on an iPhone 16 Pro simulator running iOS 18.5 ([run #2](https://github.com/TheMaxynator/resona-airplay/actions/runs/43535713886), source `83ad80e`). The full device build was still running when these notes were updated. A simulator build cannot verify a physical LG AirPlay receiver. The [research, limitations and device test checklist](AIRPLAY.md) distinguish implementation from verified hardware behavior. LiveContainer has an [open iOS 27 external-display report](https://github.com/LiveContainer/LiveContainer/issues/1694). This fork has not been physically tested there; a directly sideloaded installation is the reference configuration.
 
 ## License
 
