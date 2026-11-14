@@ -25,6 +25,7 @@
       if (track && track.artworkUrl && cover.getAttribute('src') !== track.artworkUrl) cover.src = track.artworkUrl;
       text('remote-toggle', snapshot.state === 'playing' ? 'Pauzeren' : 'Afspelen');
       document.querySelectorAll('.transport button').forEach(function (button) { button.disabled = !track || !snapshot.receiverOnline; });
+      document.getElementById('remote-next').disabled = !track || !snapshot.receiverOnline || snapshot.index + 1 >= snapshot.queue.length;
       var seek = document.getElementById('seek'); seek.disabled = !track || snapshot.duration <= 0;
       if (!interacting) { seek.max = Math.max(1, snapshot.duration); seek.value = snapshot.position; }
       text('remote-elapsed', time(snapshot.position)); text('remote-duration', time(snapshot.duration));
