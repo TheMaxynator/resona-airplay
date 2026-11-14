@@ -170,7 +170,7 @@ test('an app update replaces only its own helper on the requested port', { timeo
   const original = await start(target), unrelated = await start(other);
   const exited = new Promise(resolve => original.once('exit', resolve));
   await start(target, true); await exited;
-  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.1.1');
+  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.1.2');
   assert.equal((await fetch('http://127.0.0.1:' + other + '/health')).status, 200);
   assert.equal(unrelated.exitCode, null); assert.equal(unrelated.signalCode, null);
 });
