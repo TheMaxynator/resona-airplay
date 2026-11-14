@@ -1,6 +1,6 @@
 {
   "name": "resona-webos",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Resona artwork receiver for rooted LG webOS TVs",
   "license": "GPL-3.0-only",
