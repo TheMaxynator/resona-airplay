@@ -52,6 +52,8 @@ final class TVPlaybackModel: ObservableObject {
     @Published private(set) var title = "Resona"
     @Published private(set) var artist = "Choose a track on your iPhone"
     @Published private(set) var artwork: UIImage?
+    @Published private(set) var artworkURL = ""
+    @Published private(set) var trackID = ""
     @Published private(set) var hasTrack = false
     @Published private(set) var position: Double = 0
     @Published private(set) var duration: Double = 0
@@ -90,6 +92,8 @@ final class TVPlaybackModel: ObservableObject {
         hasTrack = (data["hasTrack"] as? NSNumber)?.boolValue ?? false
         title = hasTrack ? (data["title"] as? String ?? "Unknown track") : "Resona"
         artist = hasTrack ? (data["artist"] as? String ?? "") : "Choose a track on your iPhone"
+        trackID = hasTrack ? (data["trackId"] as? String ?? "") : ""
+        artworkURL = hasTrack ? (data["artworkUrl"] as? String ?? "") : ""
         let nextArtwork = data["artwork"] as? UIImage
         if artwork !== nextArtwork { artwork = nextArtwork }
         duration = Self.validTime((data["duration"] as? NSNumber)?.doubleValue ?? 0)
