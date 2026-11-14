@@ -104,12 +104,16 @@ def main():
             gh("release", "upload", tag, *metadata, "--repo", repository, "--clobber")
         else:
             notes = output / "release-notes.md"
-            notes.write_text("Resona TV 0.1: first rooted-webOS receiver test build.\n\n"
-                             "Four artwork layouts, PIN pairing, phone/TV controls and a receiver-owned queue. "
-                             "Protocol tests, Node 12 compatibility and real-MP3 browser tests passed before publication. "
-                             "Physical LG hardware testing is still required.\n\n"
-                             "Install through Homebrew Channel using the repository JSON linked in the README. "
-                             "The companion iPhone client requires Resona TV 2.0.2 or later.\n")
+            notes.write_text(f"Resona TV {version}: artwork and queue fixes.\n\n"
+                             "Late artwork updates replace the placeholder without reloading audio; stale updates cannot overwrite another track. "
+                             "The companion iPhone 2.0.3 build sends the real Resona queue (up to 100 online tracks) and moves the TV button above the player bar. "
+                             "Next, Previous and automatic advancement work on the receiver-owned queue. "
+                             "The launcher replaces its own older helper after an update.\n\n"
+                             "Protocol tests, Node 12 compatibility and real-MP3 browser checks passed before publication. "
+                             "The user confirmed basic playback on an LG G3 with webOS 23 in 0.1.0; these fixes still need a hardware retest.\n\n"
+                             "Install or update through the existing Homebrew repository. Update the iPhone to Resona TV 2.0.3 (build 20), "
+                             "open Resona TV on the television, pair again if prompted and select Send queue to LG. "
+                             "The queue is a snapshot: send it again after editing the phone queue. Expiring media URLs are not renewed.\n")
             gh("release", "create", tag, str(ipk), *metadata, "--repo", repository,
                "--target", os.environ["GITHUB_SHA"], "--title", "Resona TV (webOS) " + version,
                "--notes-file", str(notes), "--prerelease")
