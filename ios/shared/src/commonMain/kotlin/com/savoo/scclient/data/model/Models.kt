@@ -18,7 +18,12 @@ data class Track(
     @SerialName("permalink_url") val permalinkUrl: String? = null,
     @SerialName("policy") val policy: String? = null,
     @SerialName("waveform_url") val waveformUrl: String? = null,
+    @SerialName("publisher_metadata") val publisherMetadata: PublisherMetadata? = null,
+    @SerialName("metadata_artist") val metadataArtist: String? = null,
 )
+
+@Serializable
+data class PublisherMetadata(val artist: String? = null)
 
 @Serializable
 data class Media(
