@@ -35,7 +35,7 @@ final class TVDisplayTests: XCTestCase {
         let queue = """
         {"sourceId":"42","index":1,"skipped":0,"truncated":false,"tracks":[
           {"id":"slot-1","sourceId":"41","url":"https://example.org/one.mp3","title":"Previous","artist":"A","artworkUrl":"https://example.org/one.jpg","duration":120},
-          {"id":"slot-2","sourceId":"42","url":"https://example.org/two.mp3","title":"Current","artist":"Eva Vrijdag","artworkUrl":"https://example.org/two.jpg","waveformUrl":"https://wave.sndcdn.com/example.json","duration":240},
+          {"id":"slot-2","sourceId":"42","url":"https://example.org/two.mp3","title":"Current","artist":"Eva Vrijdag","artworkUrl":"https://example.org/two.jpg","waveformUrl":"https://wave.sndcdn.com/example.json","chapterText":"00:00 Intro\\n02:00 Main set","duration":240},
           {"id":"slot-3","sourceId":"43","url":"https://example.org/three.mp3","title":"Next","artist":"C","artworkUrl":"https://example.org/three.jpg","duration":180}]}
         """
         let observer = NotificationCenter.default.addObserver(forName: Notification.Name("ResonaTVQueueRequest"), object: nil, queue: .main) { note in
@@ -57,6 +57,7 @@ final class TVDisplayTests: XCTestCase {
         XCTAssertEqual(tracks[1]["artworkUrl"] as? String, "https://example.org/two.jpg")
         XCTAssertEqual(tracks[1]["artist"] as? String, "Eva Vrijdag")
         XCTAssertEqual(tracks[1]["waveformUrl"] as? String, "https://wave.sndcdn.com/example.json")
+        XCTAssertEqual(tracks[1]["chapterText"] as? String, "00:00 Intro\n02:00 Main set")
         let cover = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
             UIColor.magenta.setFill(); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         }
@@ -168,6 +169,20 @@ final class TVDisplayTests: XCTestCase {
         XCTAssertEqual(state.track?.title, "Track")
         XCTAssertEqual(state.position, 15)
         XCTAssertEqual(state.preferences.layout, "cinema")
+        XCTAssertNil(state.session)
+    }
+
+    func testLGSessionMetadataDecodesWithoutChangingQueueIdentity() throws {
+        let data = Data("""
+        {"generation":7,"receiverOnline":true,"state":"paused","track":{"id":"slot-2","sourceId":"42","title":"Set","artist":"Eva Vrijdag","chapters":[{"position":0,"title":"Intro"},{"position":120,"title":"Main set"}]},"position":120,"duration":5400,"error":"","preferences":{"layout":"studio","dim":0.55,"progress":true},"capabilities":{"sessionTools":true},"session":{"resumePosition":120,"bookmarks":[{"id":"0123456789abcdef","position":120,"label":"Transition"}],"sleepTimer":{"mode":"minutes","deadline":1800000000000}}}
+        """.utf8)
+        let state = try JSONDecoder().decode(LGPlaybackSnapshot.self, from: data)
+        XCTAssertEqual(state.track?.id, "slot-2"); XCTAssertEqual(state.track?.sourceId, "42")
+        XCTAssertEqual(state.track?.chapters?.last?.position, 120)
+        XCTAssertEqual(state.session?.bookmarks.first?.label, "Transition")
+        XCTAssertEqual(state.session?.resumePosition, 120)
+        XCTAssertEqual(state.session?.sleepTimer?.mode, "minutes")
+        XCTAssertEqual(state.capabilities?.sessionTools, true)
     }
 
     func testInvalidPlaybackTimesNeverBecomeInvalidProgress() {
