@@ -6,9 +6,15 @@ import MediaPlayer
 import CoreMedia
 
 enum TVOutputMode: String, CaseIterable, Identifiable {
-    case audio, display
+    case audio, display, lg
     var id: String { rawValue }
-    var title: String { self == .audio ? "Audio only" : "TV display" }
+    var title: String {
+        switch self {
+        case .audio: return "Audio only"
+        case .display: return "TV display"
+        case .lg: return "LG app"
+        }
+    }
 }
 
 enum TVLayout: String, CaseIterable, Identifiable {
@@ -454,7 +460,7 @@ struct TVSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("AirPlay mode") {
+                Section("TV output") {
                     Picker("Output", selection: $model.outputMode) {
                         ForEach(TVOutputMode.allCases) { Text($0.title).tag($0) }
                     }.pickerStyle(.segmented)
@@ -463,8 +469,13 @@ struct TVSettingsView: View {
                         Text("If Screen Mirroring is active, stop it in Control Center, then choose your TV using the audio AirPlay button below.")
                             .font(.footnote).foregroundColor(.secondary)
                     }
-                    AirPlayPicker(videoDevices: model.outputMode == .display).frame(height: 44)
-                        .accessibilityLabel("Choose AirPlay output")
+                    if model.outputMode == .lg {
+                        Text("Open the separate Resona TV app on your LG. Stop AirPlay and Screen Mirroring before connecting. The TV plays the music directly.")
+                            .font(.footnote).foregroundColor(.secondary)
+                    } else {
+                        AirPlayPicker(videoDevices: model.outputMode == .display).frame(height: 44)
+                            .accessibilityLabel("Choose AirPlay output")
+                    }
                 }
                 if model.outputMode == .display {
                     Section("TV appearance") {
@@ -488,11 +499,14 @@ struct TVSettingsView: View {
                         .font(.footnote).foregroundColor(.secondary)
                 }
                 }
-                LGConnectSettings(model: model)
-                Section("Connection") {
+                if model.outputMode == .lg {
+                    LGConnectSettings(model: model)
+                } else {
+                  Section("Connection") {
                     LabeledContent("Audio output", value: model.routeName)
                     LabeledContent("TV display", value: model.connectedDisplays > 0 ? "Connected" : "Not connected")
                     Text(model.accessoryStatus).font(.footnote).foregroundColor(.secondary)
+                  }
                 }
             }
             .navigationTitle("TV display")
