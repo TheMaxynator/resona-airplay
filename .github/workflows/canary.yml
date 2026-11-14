@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   android:
+    if: github.repository == 'savo-o/resona'
     name: Build Android
     runs-on: ubuntu-latest
 
@@ -77,6 +78,7 @@ jobs:
           retention-days: 7
 
   ios:
+    if: github.repository == 'savo-o/resona'
     name: Build iOS
     runs-on: macos-15
 
@@ -126,6 +128,7 @@ jobs:
           retention-days: 7
 
   publish:
+    if: github.repository == 'savo-o/resona'
     name: Publish combined Canary Release
     needs: [android, ios]
     runs-on: ubuntu-latest
