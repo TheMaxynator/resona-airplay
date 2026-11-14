@@ -402,6 +402,7 @@ class MediaController private constructor(private val engine: AudioPlayer) : Rem
         artist = item.mediaMetadata.artist?.toString().orEmpty(),
         artworkUrl = item.mediaMetadata.artworkUri?.toString(),
         durationMs = 0L,
+        trackId = item.mediaId,
     )
 
     override fun onPlay() = play()
