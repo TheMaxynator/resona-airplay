@@ -5,6 +5,26 @@ import AVFoundation
 
 @MainActor
 final class TVDisplayTests: XCTestCase {
+    func testLGAddressesStayInsideThePrivateHomeNetwork() throws {
+        XCTAssertEqual(try LGConnectClient.receiverURL("192.168.1.50").absoluteString, "http://192.168.1.50:42700")
+        XCTAssertEqual(try LGConnectClient.receiverURL("http://10.0.0.20:42700/remote").host, "10.0.0.20")
+        XCTAssertEqual(try LGConnectClient.receiverURL("172.16.2.9").host, "172.16.2.9")
+        for address in ["https://example.com", "8.8.8.8", "127.0.0.1", "169.254.1.2", "172.15.1.2", "192.168.1.999", "192.168.01.2", "http://user:pass@192.168.1.2", "http://192.168.1.2/api/command", "http://192.168.1.2?token=secret", "http://192.168.1.2:99999"] {
+            XCTAssertThrowsError(try LGConnectClient.receiverURL(address), address)
+        }
+    }
+
+    func testLGPlaybackSnapshotDecodesTheReceiverProtocol() throws {
+        let data = Data("""
+        {"generation":3,"receiverOnline":true,"state":"playing","track":{"id":"test","title":"Track","artist":"Artist"},"position":15,"duration":120,"error":"","preferences":{"layout":"cinema","dim":0.48,"progress":true}}
+        """.utf8)
+        let state = try JSONDecoder().decode(LGPlaybackSnapshot.self, from: data)
+        XCTAssertTrue(state.receiverOnline)
+        XCTAssertEqual(state.track?.title, "Track")
+        XCTAssertEqual(state.position, 15)
+        XCTAssertEqual(state.preferences.layout, "cinema")
+    }
+
     func testInvalidPlaybackTimesNeverBecomeInvalidProgress() {
         for invalid in [Double.nan, Double.infinity, -Double.infinity, -1] {
             XCTAssertEqual(TVPlaybackModel.validTime(invalid), 0)
