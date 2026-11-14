@@ -104,18 +104,18 @@ def main():
             gh("release", "upload", tag, *metadata, "--repo", repository, "--clobber")
         else:
             notes = output / "release-notes.md"
-            notes.write_text(f"Resona TV {version}: compact Gallery layout and artwork fixes.\n\n"
-                             "Gallery now uses a centered square cover, compact title/artist text, cover-derived color washes and a playback indicator. "
-                             "The progress bar and toolbar hide after inactivity, including remote focus. "
-                             "Late artwork updates replace the placeholder without reloading audio; stale updates cannot overwrite another track. "
-                             "The companion iPhone 2.0.3 build sends the real Resona queue (up to 100 online tracks) and moves the TV button above the player bar. "
-                             "Next, Previous and automatic advancement work on the receiver-owned queue. "
-                             "The launcher replaces its own older helper after an update.\n\n"
-                             "Protocol tests, Node 12 compatibility and real-MP3 browser checks passed before publication. "
-                             "The user confirmed basic playback on an LG G3 with webOS 23 in 0.1.0; these fixes still need a hardware retest.\n\n"
-                             "Install or update through the existing Homebrew repository. Update the iPhone to Resona TV 2.0.3 (build 20), "
-                             "open Resona TV on the television, pair again if prompted and select Send queue to LG. "
-                             "The queue is a snapshot: send it again after editing the phone queue. Expiring media URLs are not renewed.\n")
+            notes.write_text(f"Resona TV {version}: progress controls, readable artists and efficient track waveforms.\n\n"
+                             "Choose Always visible or Auto fade separately for each of the four layouts, directly on the TV or in the phone web remote. "
+                             "Gallery places a subtle 90%-width progress line near the bottom edge. Stylized Unicode names are normalized to readable text.\n\n"
+                             "Optional SoundCloud track waveforms use precomputed peaks, rasterized to two small cached canvases. "
+                             "Only composited transforms change during playback. This is a position-synchronized track waveform, not a live FFT or spectrum. "
+                             "The native audio player and hardware decoder remain unchanged. Unavailable waveform data falls back to the line.\n\n"
+                             "The companion iPhone 2.0.4 (build 21) reads publisher artist metadata and forwards waveform URLs. "
+                             "For the reported Subcultuur track the published artist is Eva Vrijdag, while SUBCULTUUR is the uploader. "
+                             "The TV progress settings and Unicode fix also work with the previous sender.\n\n"
+                             "Receiver tests, Node 12 compatibility and browser regressions pass before publication. "
+                             "CI frame-cadence measurements are not a physical LG G3 FPS guarantee. "
+                             "Install through the existing Homebrew repository and reopen the app after updating.\n")
             gh("release", "create", tag, str(ipk), *metadata, "--repo", repository,
                "--target", os.environ["GITHUB_SHA"], "--title", "Resona TV (webOS) " + version,
                "--notes-file", str(notes), "--prerelease")
