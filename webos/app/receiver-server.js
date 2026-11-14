@@ -6,7 +6,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const LAYOUTS = ['cinema', 'gallery', 'ambient', 'night'];
 const DEFAULTS = { layout: 'cinema', dim: 0.48, progress: true };
 function fail(message, status) { const error = new Error(message); error.status = status || 400; throw error; }
@@ -42,6 +42,7 @@ function makeReceiver(options) {
   let code, codeExpires, sessions = new Map(), failures = new Map();
   let revision = 0, generation = 0, queue = [], index = -1, position = 0;
   let desiredPlaying = false, state = 'idle', duration = 0, error = '';
+  let artworkRevision = 0;
   let preferences = Object.assign({}, DEFAULTS), commands = [], sequence = 0;
   const startedAt = clock();
   let lastDisplay = 0;
@@ -75,7 +76,7 @@ function makeReceiver(options) {
   }
   function loadAt(next, start, play) {
     index = next; generation++; position = start || 0; duration = current().duration;
-    state = 'loading'; error = ''; desiredPlaying = play;
+    state = 'loading'; error = ''; desiredPlaying = play; artworkRevision = 0;
     enqueue('load', { track: current(), position, autoplay: play });
   }
   function command(value) {
@@ -88,6 +89,15 @@ function makeReceiver(options) {
       const start = value.position === undefined ? 0 : value.position;
       if (!finite(start, 0, 604800)) fail('Ongeldige afspeelpositie.');
       queue = nextQueue; loadAt(nextIndex, start, value.autoplay !== false);
+    } else if (value.type === 'artwork') {
+      if (!Number.isSafeInteger(value.generation) || typeof value.trackId !== 'string' ||
+          !Number.isSafeInteger(value.artworkRevision) || value.artworkRevision < 1) fail('Ongeldige coverupdate.');
+      if (!current() || value.generation !== generation || value.trackId !== current().id || value.artworkRevision <= artworkRevision) {
+        return { accepted: true, ignored: true, generation, revision, sequence };
+      }
+      const artworkUrl = value.artworkUrl ? url(value.artworkUrl, true) : '';
+      current().artworkUrl = artworkUrl; artworkRevision = value.artworkRevision;
+      enqueue('artwork', { trackId: current().id, artworkUrl });
     } else if (value.type === 'preferences') {
       const patch = value.preferences || {};
       if (patch.layout !== undefined && LAYOUTS.indexOf(patch.layout) < 0) fail('Onbekend ontwerp.');
@@ -273,8 +283,28 @@ if (require.main === module) {
   function arg(name, fallback) { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fallback; }
   const port = Number(arg('--port', '42700'));
   const host = arg('--host', '0.0.0.0');
+  let replaced = false;
+  if (args.indexOf('--replace') >= 0) {
+    // An IPK update replaces files, but an older helper may still own the port.
+    // Replace only our exact Node script on this port, owned by the same UID.
+    fs.readdirSync('/proc').filter(pid => /^\d+$/.test(pid) && Number(pid) !== process.pid).forEach(pid => {
+      try {
+        const command = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0');
+        const flag = command.indexOf('--port');
+        if (Number(pid) > 1 && fs.statSync('/proc/' + pid).uid === process.getuid() &&
+            /^(node|nodejs)$/.test(path.basename(command[0])) && command[1] === __filename &&
+            flag >= 0 && Number(command[flag + 1]) === port) {
+          process.kill(Number(pid), 'SIGTERM'); replaced = true;
+        }
+      } catch (_) { /* Exited or inaccessible processes are unrelated. */ }
+    });
+  }
   const receiver = makeReceiver({ dataDir: arg('--data-dir', path.join(os.tmpdir(), 'resona-tv-' + process.getuid())), idleTimeout: 120000 });
-  receiver.server.on('error', e => { console.error(e.code === 'EADDRINUSE' ? 'Resona TV is already running on this port.' : 'Unable to start Resona TV: ' + e.code); process.exitCode = 1; });
+  let retries = 0;
+  receiver.server.on('error', e => {
+    if (e.code === 'EADDRINUSE' && replaced && retries++ < 10) { setTimeout(() => receiver.server.listen(port, host), 200); return; }
+    console.error(e.code === 'EADDRINUSE' ? 'Resona TV is already running on this port.' : 'Unable to start Resona TV: ' + e.code); process.exitCode = 1;
+  });
   receiver.server.listen(port, host, () => console.log('Resona TV receiver listening on port ' + receiver.server.address().port));
 }
 module.exports = { makeReceiver, track, url, loopback, VERSION };
