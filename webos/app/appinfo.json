@@ -1,6 +1,6 @@
 {
   "id": "com.themaxynator.resonatv",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "vendor": "Resona community fork",
   "type": "web",
   "main": "index.html",
@@ -12,6 +12,8 @@
   "bgColor": "#101015",
   "iconColor": "#101015",
   "disableBackHistoryAPI": true,
-  "screenSaverProperties": { "preferredType": 3 },
+  "screenSaverProperties": {
+    "preferredType": 3
+  },
   "useGalleryMode": true
 }
