@@ -35,7 +35,7 @@ final class TVDisplayTests: XCTestCase {
         let queue = """
         {"sourceId":"42","index":1,"skipped":0,"truncated":false,"tracks":[
           {"id":"slot-1","url":"https://example.org/one.mp3","title":"Previous","artist":"A","artworkUrl":"https://example.org/one.jpg","duration":120},
-          {"id":"slot-2","url":"https://example.org/two.mp3","title":"Current","artist":"B","artworkUrl":"https://example.org/two.jpg","duration":240},
+          {"id":"slot-2","url":"https://example.org/two.mp3","title":"Current","artist":"Eva Vrijdag","artworkUrl":"https://example.org/two.jpg","waveformUrl":"https://wave.sndcdn.com/example.json","duration":240},
           {"id":"slot-3","url":"https://example.org/three.mp3","title":"Next","artist":"C","artworkUrl":"https://example.org/three.jpg","duration":180}]}
         """
         let observer = NotificationCenter.default.addObserver(forName: Notification.Name("ResonaTVQueueRequest"), object: nil, queue: .main) { note in
@@ -55,6 +55,8 @@ final class TVDisplayTests: XCTestCase {
         let tracks = try XCTUnwrap(load["tracks"] as? [[String: Any]])
         XCTAssertEqual(tracks.count, 3); XCTAssertEqual(load["index"] as? Int, 1)
         XCTAssertEqual(tracks[1]["artworkUrl"] as? String, "https://example.org/two.jpg")
+        XCTAssertEqual(tracks[1]["artist"] as? String, "Eva Vrijdag")
+        XCTAssertEqual(tracks[1]["waveformUrl"] as? String, "https://wave.sndcdn.com/example.json")
         let cover = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
             UIColor.magenta.setFill(); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         }
