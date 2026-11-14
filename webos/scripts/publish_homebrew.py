@@ -104,21 +104,22 @@ def main():
             gh("release", "upload", tag, *metadata, "--repo", repository, "--clobber")
         else:
             notes = output / "release-notes.md"
-            notes.write_text(f"Resona TV {version}: shared queues and remembered connections.\n\n"
-                             "The companion iPhone 2.1.0 (build 22) lets the existing mini player, full player and queue control the active LG session. "
-                             "TV and phone keep separate playback state: a connection interruption never silently switches the controls back to local audio. "
-                             "Use Listen on iPhone to pause the receiver before returning the current track and position to the phone.\n\n"
-                             "Add next/last, reorder, remove or jump to a queue item from Resona or the web remote. "
-                             "Queue revisions reject conflicting edits from other controllers. Editing upcoming tracks preserves the current decoder, position and track identity. "
-                             "A Retry stream action can resolve the current SoundCloud link again without replacing the other queue entries.\n\n"
-                             "Paired devices are remembered across receiver restarts using token hashes; raw tokens and stream URLs are not stored. "
-                             "Forget individual phones from their remote or use Forget paired phones on the TV pairing screen. "
-                             "Reconnect uses bounded backoff and retries immediately when the iPhone returns to the foreground.\n\n"
-                             "Gallery, the independent progress modes, artwork and the optional precomputed waveform remain available. "
-                             "Receiver tests, actual Node 12 compatibility and real-audio browser regressions pass before publication. "
-                             "The browser tests exercise two controllers editing one queue without reloading playback. "
-                             "The complete iPhone build and physical LG/iPhone performance are verified separately. "
-                             "Install from the existing Homebrew repository, reopen the app and pair once after upgrading from 0.1.x.\n")
+            notes.write_text(f"Resona TV {version}: Studio, chapters and session tools.\n\n"
+                             "Gallery is the default for new installations; existing preferences are retained. Studio adds a wide precomputed waveform, chapter markers and the current chapter. "
+                             "Open Session from the toolbar or press Up from the idle screen for chapters, bookmarks, the current/upcoming queue, presets and a sleep timer. Back closes it; it hides after 30 seconds without interaction.\n\n"
+                             "The companion iPhone 2.2.0 (build 23) forwards labelled timestamps from SoundCloud descriptions and adds Session & DJ sets in LG TV Connect. "
+                             "Only valid labelled timestamps are converted; at least two are required. Manual imports can provide chapterText. No tracklist is guessed. "
+                             "Queue chapter metadata is bounded, with extra space reserved for the selected track.\n\n"
+                             "Bookmarks and listening positions survive receiver restarts and follow the original SoundCloud track ID across queue transfers. "
+                             "Resume is explicit and seeks the currently loaded stream; it never stores an expiring URL or restores a queue automatically. "
+                             "History is capped at 100 tracks and 20 bookmarks per track, with checkpoints every 15 seconds and on pause/track changes. Repeated paused reports do not rewrite storage.\n\n"
+                             "The sleep timer pauses audio after 15/30/60/90 minutes or at the end of the current track. It does not turn off the television. "
+                             "End-of-track sleep suppresses automatic queue advancement and cancels on a manual track change. "
+                             "Gallery/DJ-set/Night presets retain the other layouts' progress choices. The optional Up next card appears near the end and stays hidden when end-of-track sleep is active.\n\n"
+                             "The waveform is still a cached bitmap, with no FFT, second decoder or continuous JavaScript rendering loop. "
+                             "The web remote now polls compact artwork metadata. Receiver tests, actual Node 12 compatibility and real-MP3 browser regressions gate publication; "
+                             "Gallery/Studio/Session frame samples are CI measurements, not physical G3 FPS claims. "
+                             "The native IPA and hardware testing are verified separately. Update using the existing Homebrew repository and reopen Resona TV.\n")
             gh("release", "create", tag, str(ipk), *metadata, "--repo", repository,
                "--target", os.environ["GITHUB_SHA"], "--title", "Resona TV (webOS) " + version,
                "--notes-file", str(notes), "--prerelease")
