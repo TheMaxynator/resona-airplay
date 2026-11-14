@@ -4,6 +4,8 @@ import Shared
 
 @main
 struct ResonaApp: App {
+    @UIApplicationDelegateAdaptor(ResonaAppDelegate.self) private var appDelegate
+    @StateObject private var tvModel = TVPlaybackModel.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -17,8 +19,17 @@ struct ResonaApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ComposeView()
-                .ignoresSafeArea()
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                Color.black
+            } else if ProcessInfo.processInfo.arguments.contains("--tv-preview") {
+                TVNowPlayingView(model: tvModel).onAppear { tvModel.loadPreview() }
+            } else {
+                ComposeView()
+                    .ignoresSafeArea()
+                    .overlay(alignment: .topTrailing) {
+                        TVDisplayButton(model: tvModel).padding(.trailing, 12).padding(.top, 4)
+                    }
+            }
         }
         .onChange(of: scenePhase) { phase in
             if phase == .background {
@@ -30,7 +41,9 @@ struct ResonaApp: App {
 
 struct ComposeView: UIViewControllerRepresentable {
     func makeUIViewController(context: UIViewControllerRepresentableContext<ComposeView>) -> UIViewController {
-        MainViewControllerKt.MainViewController()
+        let container = TVContainerController()
+        container.embed(MainViewControllerKt.MainViewController())
+        return container
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: UIViewControllerRepresentableContext<ComposeView>) {}
