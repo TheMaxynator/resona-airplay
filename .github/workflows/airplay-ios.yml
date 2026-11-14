@@ -34,7 +34,7 @@ jobs:
           xcodebuild -version
           xcrun swiftc -typecheck -target arm64-apple-ios16.0 \
             -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
-            ios/iosApp/iosApp/TVNowPlaying.swift
+            ios/iosApp/iosApp/TVNowPlaying.swift ios/iosApp/iosApp/LGConnect.swift
       - name: Test native display and render the four layouts
         run: |
           set -o pipefail
@@ -47,6 +47,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/tv-test-build" \
             -resultBundlePath "$RUNNER_TEMP/TVDisplayTests.xcresult" \
             CODE_SIGNING_ALLOWED=NO test | tee "$RUNNER_TEMP/airplay-tests.log"
+          xcrun simctl shutdown "$DEVICE_ID"
       - name: Build unsigned IPA
         working-directory: ios/iosApp
         run: |
@@ -58,12 +59,12 @@ jobs:
           mkdir -p build/ipa/Payload
           cp -R build/device/Build/Products/Debug-iphoneos/Resona.app build/ipa/Payload/
           cd build/ipa
-          zip -qry ../Resona-TV-2.0.1.ipa Payload
+          zip -qry ../Resona-TV-2.0.2.ipa Payload
       - name: Upload unsigned test IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Resona-TV-2.0.1-unsigned
-          path: ios/iosApp/build/Resona-TV-2.0.1.ipa
+          name: Resona-TV-2.0.2-unsigned
+          path: ios/iosApp/build/Resona-TV-2.0.2.ipa
           if-no-files-found: error
           retention-days: 30
       - name: Upload test results and logs
