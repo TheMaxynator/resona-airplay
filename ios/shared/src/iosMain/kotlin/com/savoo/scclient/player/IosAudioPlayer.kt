@@ -144,6 +144,7 @@ class IosAudioPlayer(private val effects: SoundEffects) : AudioPlayer {
             }
         }
         registerRemoteCommands()
+        scope.launch { TVRemoteSession.state.collect { updateNowPlaying() } }
         scope.launch {
             while (isActive) {
                 poll()
@@ -287,16 +288,21 @@ class IosAudioPlayer(private val effects: SoundEffects) : AudioPlayer {
     }
 
     private fun updateNowPlaying() {
-        val info = info ?: return
+        val remote = TVRemoteSession.state.value.takeIf { it.active }
+        val remoteTrack = remote?.track
+        val localInfo = info
+        if (remote == null && localInfo == null) return
         val status = _status.value
         val map = mutableMapOf<Any?, Any?>(
-            MPMediaItemPropertyTitle to info.title,
-            MPMediaItemPropertyArtist to info.artist,
-            MPMediaItemPropertyPlaybackDuration to NSNumber(double = status.durationMs.coerceAtLeast(info.durationMs) / 1000.0),
-            MPNowPlayingInfoPropertyElapsedPlaybackTime to NSNumber(double = status.positionMs / 1000.0),
-            MPNowPlayingInfoPropertyPlaybackRate to NSNumber(double = if (status.isPlaying) rate.toDouble() else 0.0),
+            MPMediaItemPropertyTitle to (remoteTrack?.title ?: localInfo?.title ?: "LG TV"),
+            MPMediaItemPropertyArtist to (remoteTrack?.user?.username ?: localInfo?.artist ?: ""),
+            MPMediaItemPropertyPlaybackDuration to NSNumber(double = (remote?.durationMs ?: status.durationMs.coerceAtLeast(localInfo?.durationMs ?: 0)) / 1000.0),
+            MPNowPlayingInfoPropertyElapsedPlaybackTime to NSNumber(double = (remote?.positionMs ?: status.positionMs) / 1000.0),
+            MPNowPlayingInfoPropertyPlaybackRate to NSNumber(double = if (remote != null) {
+                if (remote.online && remote.state == "playing") 1.0 else 0.0
+            } else if (status.isPlaying) rate.toDouble() else 0.0),
         )
-        artwork?.let { map[MPMediaItemPropertyArtwork] = it }
+        if (remote == null || remoteTrack?.id?.toString() == localInfo?.trackId) artwork?.let { map[MPMediaItemPropertyArtwork] = it }
         MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = map
         publishTVSnapshot()
     }
@@ -357,29 +363,31 @@ class IosAudioPlayer(private val effects: SoundEffects) : AudioPlayer {
     private fun registerRemoteCommands() {
         val center = MPRemoteCommandCenter.sharedCommandCenter()
         center.playCommand.addTargetWithHandler { _ ->
-            remoteCommands?.onPlay()
+            if (!TVRemoteSession.command("play")) remoteCommands?.onPlay()
             MPRemoteCommandHandlerStatusSuccess
         }
         center.pauseCommand.addTargetWithHandler { _ ->
-            remoteCommands?.onPause()
+            if (!TVRemoteSession.command("pause")) remoteCommands?.onPause()
             MPRemoteCommandHandlerStatusSuccess
         }
         center.togglePlayPauseCommand.addTargetWithHandler { _ ->
-            if (wantsPlay) remoteCommands?.onPause() else remoteCommands?.onPlay()
+            if (!TVRemoteSession.command(if (TVRemoteSession.state.value.state == "playing") "pause" else "play")) {
+                if (wantsPlay) remoteCommands?.onPause() else remoteCommands?.onPlay()
+            }
             MPRemoteCommandHandlerStatusSuccess
         }
         center.nextTrackCommand.addTargetWithHandler { _ ->
-            remoteCommands?.onNext()
+            if (!TVRemoteSession.command("next")) remoteCommands?.onNext()
             MPRemoteCommandHandlerStatusSuccess
         }
         center.previousTrackCommand.addTargetWithHandler { _ ->
-            remoteCommands?.onPrevious()
+            if (!TVRemoteSession.command("previous")) remoteCommands?.onPrevious()
             MPRemoteCommandHandlerStatusSuccess
         }
         center.changePlaybackPositionCommand.addTargetWithHandler { event ->
             val position = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
                 ?: return@addTargetWithHandler MPRemoteCommandHandlerStatusCommandFailed
-            remoteCommands?.onSeek((position * 1000).roundToLong())
+            if (!TVRemoteSession.command("seek", (position * 1000).roundToLong())) remoteCommands?.onSeek((position * 1000).roundToLong())
             MPRemoteCommandHandlerStatusSuccess
         }
     }
