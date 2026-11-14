@@ -30,6 +30,12 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
+import com.savoo.scclient.player.TVRemoteSession
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,12 +77,21 @@ fun QueueContent(
     modifier: Modifier = Modifier,
 ) {
     val hapticFeedback = LocalHapticFeedback.current
-    val entries by controller.queueEntries.collectAsState()
+    val serverEntries by controller.queueEntries.collectAsState()
+    var draft by remember { mutableStateOf<List<QueueEntry>?>(null) }
+    var dragging by remember { mutableStateOf(false) }
+    var capturedRevision by remember { mutableStateOf(-1L) }
+    val entries = draft ?: serverEntries
     val state by controller.state.collectAsState()
     val lazyListState = rememberLazyListState()
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        controller.moveQueueItem(from.index, to.index)
+        if (state.remoteTV) {
+            val list = entries.toMutableList()
+            if (from.index in list.indices && to.index in list.indices) { list.add(to.index, list.removeAt(from.index)); draft = list }
+        } else controller.moveQueueItem(from.index, to.index)
     }
+    LaunchedEffect(state.remoteQueueRevision, dragging) { if (!dragging && state.remoteQueueRevision != capturedRevision) draft = null }
+    LaunchedEffect(dragging, draft) { if (!dragging && draft != null) { delay(2500); draft = null } }
 
     Column(modifier = modifier.padding(horizontal = 20.dp)) {
         Text(
@@ -86,7 +101,7 @@ fun QueueContent(
         )
         state.currentTrack?.let { current ->
             Text(
-                playingFromSource(state.queueTag, current.user.username),
+                if (state.remoteTV) stringResource(Res.string.tv_remote_playing) else playingFromSource(state.queueTag, current.user.username),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -98,13 +113,22 @@ fun QueueContent(
                 ReorderableItem(reorderableState, key = entry.id) { isDragging ->
                     QueueRow(
                         entry = entry,
-                        isCurrent = index == state.queueIndex,
+                        isCurrent = entry.id == serverEntries.getOrNull(state.queueIndex)?.id,
                         isDragging = isDragging,
-                        onPlay = { controller.playFromQueue(index) },
-                        onRemove = { controller.removeQueueItem(index) },
+                        onPlay = { if (state.remoteTV) TVRemoteSession.entryCommand("queue-play", entry.id) else controller.playFromQueue(index) },
+                        onRemove = { if (state.remoteTV) TVRemoteSession.entryCommand("queue-remove", entry.id) else controller.removeQueueItem(index) },
                         dragModifier = Modifier.longPressDraggableHandle(
-                            onDragStarted = { hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress) },
-                            onDragStopped = { hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress) },
+                            onDragStarted = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (state.remoteTV) { dragging = true; capturedRevision = state.remoteQueueRevision; draft = serverEntries }
+                            },
+                            onDragStopped = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (state.remoteTV) {
+                                    draft?.let { TVRemoteSession.reorder(it.map { item -> item.id }, capturedRevision) }
+                                    dragging = false
+                                }
+                            },
                         ),
                     )
                 }
