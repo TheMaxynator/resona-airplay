@@ -23,9 +23,14 @@ receiver.server.listen(0, '127.0.0.1', async () => {
     await request('/api/display', undefined, receiver.getDisplayToken());
     const pair = await request('/api/pair', { code: receiver.getCode() });
     const token = JSON.parse(pair.body).token; assert.strictEqual(token.length, 64);
-    assert.strictEqual((await request('/api/command', { type: 'load', tracks: [{ url: 'https://example.org/test.mp3', title: 'Node 12 check' }] }, token)).status, 200);
+    assert.strictEqual((await request('/api/command', { type: 'load', tracks: [{ url: 'https://example.org/test.mp3', title: 'Node 12 check', duration: 60, chapterText: '00:00 Intro\n00:30 Main set' }] }, token)).status, 200);
     const display = JSON.parse((await request('/api/display', undefined, receiver.getDisplayToken())).body);
     assert.strictEqual(display.track.title, 'Node 12 check');
+    assert.strictEqual(display.track.chapters.length, 2);
+    assert.strictEqual((await request('/api/command', { type: 'chapter', index: 1, generation: display.generation, trackId: display.track.id }, token)).status, 200);
+    assert.strictEqual((await request('/api/command', { type: 'bookmark-add', generation: display.generation, trackId: display.track.id }, token)).status, 200);
+    assert.strictEqual((await request('/api/command', { type: 'preset', name: 'studio' }, token)).status, 200);
+    assert.strictEqual((await request('/api/command', { type: 'sleep', mode: 'end-track' }, token)).status, 200);
     assert.strictEqual((await request('/demo.mp3', undefined, undefined, { Range: 'bytes=0-31' })).body.length, 32);
     console.log('PASS: Node ' + process.versions.node + ' receiver startup, pairing, queue and audio range requests.');
   } catch (error) { console.error(error); process.exitCode = 1; }
