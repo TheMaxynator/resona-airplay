@@ -26,7 +26,7 @@ Apple Music, Spotify and Plexamp are proprietary; their current internal AirPlay
 2. **TV display:** use Screen Mirroring to expose a noninteractive external display scene. A SwiftUI view draws the sharp cover, blurred/dimmed background and track details. The phone remains the playback controller. Keep the app foregrounded and phone unlocked. The TV remote's transport overlay can hide independently of our artwork window. Physical behavior is still to be verified.
 3. **Possible later video mode:** generate an actual artwork video/HLS presentation with audio in the same playback pipeline. This could provide controlled pixels with direct video AirPlay, but would add encoding, local serving, buffering, resource and background-lifecycle work. A silent looping video alongside the existing player is not a reliable synchronized implementation and is not included.
 
-On iOS 27, external display content must be registered through `UISceneAccessory`; the fork registers it from the phone view controller. The documented Objective-C entry points are resolved at runtime so upstream's Xcode 26 toolchain can build the application. iOS 16–26 use the scene-manifest path. The registration is disabled in audio-only mode. This runtime path still requires testing on a real iOS 27 device.
+On iOS 27, external display content must be registered through `UISceneAccessory`; the fork registers it from the phone view controller. The documented Objective-C entry points are resolved at runtime so existing Xcode toolchains with pre-iOS-27 SDKs can build the application. iOS 16–26 use the scene-manifest path. The registration is disabled in audio-only mode. This runtime path still requires testing on a real iOS 27 device.
 
 On older iOS releases, stopping the custom view can return to ordinary screen mirroring. Apps cannot silently select an AirPlay receiver or turn the user's Screen Mirroring off; the settings explain the required Control Center step. An open LiveContainer report, [issue #1694](https://github.com/LiveContainer/LiveContainer/issues/1694), describes unavailable external scenes and black AirPlay output on iOS 27. This is a community reproduction, not a confirmed diagnosis on the user's iOS 27.0.1/LG setup. Test the same IPA directly through SideStore before attributing a black screen to Resona.
 
@@ -36,7 +36,7 @@ The loader requests SoundCloud's `-t500x500` variant and falls back to the origi
 
 ## Verification checklist
 
-Automated build and simulator results are recorded by the AirPlay iOS workflow. Native code typechecking has passed on the first workflow run; full compilation and simulator tests were still pending when this document was prepared. No physical LG TV result is recorded yet.
+Automated build and simulator results are recorded by the AirPlay iOS workflow. Native code typechecking and all four native simulator tests passed in [run #2](https://github.com/TheMaxynator/resona-airplay/actions/runs/43535713886), source `83ad80e`: iPhone 16 Pro simulator, iOS 18.5, Xcode 16.4. The full Kotlin/Compose device build was still running when these notes were updated. The simulator tests use the exact production TV source in an isolated native host; they do not claim to exercise the Kotlin notification sender or iOS 27 scene registration on physical hardware. No physical LG TV result is recorded yet.
 
 For the hardware test, record the iPhone installation method (direct sideload or LiveContainer), LG model and webOS version. Use the same Wi-Fi network.
 
