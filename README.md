@@ -44,12 +44,13 @@ The 2.0.4 sender uses the published artist when SoundCloud provides one, forward
 
 ## Verified and pending
 
-- **23 receiver tests** pass locally, including shared queue editing, conflicts, stale events, stream refresh, private pairing persistence, Unicode and waveform bounds. The 0.2.0 workflow must still pass Node 12 and the updated real-MP3 browser test before it publishes the Homebrew catalog.
-- The previous [2.0.4 iPhone build](https://github.com/TheMaxynator/resona-airplay/actions/runs/43608375382) passed and its IPA was delivered. Version 2.1.0 requires fresh native typechecking, ten simulator tests, an isolated test of the production Kotlin TV bridge, and the complete device IPA build.
-- The Kotlin bridge contract uses the exact production state/command and JSON source with boundary data types, independently of UIKit/Compose. The full iPhone build compiles the real application models and UI. Local Gradle downloads are unavailable in the development environment; this check runs in CI.
-- Browser coverage includes pairing, real MP3 playback, seek/pause, all four designs and progress modes, late artwork, waveform draw/fetch bounds, safe text and autonomous advancement after the phone closes. New cases use two controllers to append, reorder, remove and select tracks without reloading the current audio.
-- The user confirmed basic playback and Gallery artwork on an LG G3/webOS 23. The new iPhone TV player, queue editing, remembered connections and recovery still need a physical test. CI frame cadence is not a physical G3 FPS measurement.
-- Automatic mDNS discovery, server-assisted visuals, DJ-set bookmarks/chapters and the proposed new design variants are future work. LG's OLED screensaver policy remains in force.
+- The complete [0.2.0 webOS workflow](https://github.com/TheMaxynator/resona-airplay/actions/runs/43616509470) passed: **23 receiver tests**, actual Node 12 startup/protocol compatibility, real-MP3 browser playback and package publication.
+- The two-controller browser regression passed append, reorder, remove and selection. Upcoming queue edits preserved the active audio source, generation and paused position. Gallery/progress/waveform checks, late covers and autonomous queue advancement also passed. The phone web-remote screenshot was visually inspected.
+- The public 0.2.0 Homebrew index, release manifest and 206,920-byte package agree. SHA-256: `32b9ef08f11eb4cbf31bf9a288b91a705ec8c134f8aef219d18c1ce422dd0118`.
+- In the short 150-frame Chromium sample, median/p95 intervals were 16.7/16.8 ms (about 60 FPS), with no intervals above 33.4 ms. This is a runner measurement, not a physical G3 FPS measurement.
+- The [2.1.0 iPhone workflow](https://github.com/TheMaxynator/resona-airplay/actions/runs/43616509402) passed the production Kotlin bridge contract and native Swift typecheck. Its ten simulator tests and complete device IPA build are recorded in that workflow; the IPA has not yet been delivered. The contract compiles the actual state/command and JSON source with boundary data types; the full app build compiles the real models and UI.
+- The previous [2.0.4 iPhone build](https://github.com/TheMaxynator/resona-airplay/actions/runs/43608375382) passed and its IPA was delivered. The user confirmed basic playback and Gallery artwork on an LG G3/webOS 23. The new iPhone TV player, queue editing, remembered connections and recovery still need a physical test.
+- Automatic mDNS discovery, server-assisted visuals, DJ-set bookmarks/chapters and new design variants are future phases. LG's OLED screensaver policy remains in force.
 
 The [AirPlay research and hardware checklist](AIRPLAY.md) records platform limits. LiveContainer has an [open iOS 27 external-display report](https://github.com/LiveContainer/LiveContainer/issues/1694); a directly signed installation is the reference setup for testing the iPhone's Screen Mirroring mode.
 
