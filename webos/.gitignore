@@ -1,0 +1,8 @@
+node_modules/
+dist/
+test-results/
+app/icon.png
+app/large-icon.png
+app/demo.mp3
+app/vendor/qrcode.js
+app/vendor/QR-LICENSE.txt
