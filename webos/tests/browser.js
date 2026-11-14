@@ -43,7 +43,23 @@ const { makeReceiver } = require('../app/receiver-server');
     for (const layout of ['cinema', 'gallery', 'ambient', 'night']) {
       await phone.getByLabel('Ontwerp', { exact: true }).selectOption(layout);
       await tv.waitForFunction(value => document.body.dataset.layout === value, layout);
-      await tv.waitForFunction(value => Math.abs(Number(getComputedStyle(document.getElementById('backdrop')).opacity) - (value === 'night' ? 0.52 * 0.28 : 0.52)) < 0.01, layout);
+      await tv.waitForFunction(value => Math.abs(Number(getComputedStyle(document.getElementById('backdrop')).opacity) - (value === 'night' ? 0.52 * 0.28 : value === 'gallery' ? 1 - .48 * .35 : 0.52)) < 0.01, layout);
+      await tv.waitForFunction(value => Math.abs(Number(getComputedStyle(document.getElementById('color-wash')).opacity) - (value === 'gallery' ? 1 - .48 * .38 : 0)) < .01, layout);
+      if (layout === 'gallery') {
+        await tv.waitForFunction(() => document.body.classList.contains('palette-ready'));
+        const gallery = await tv.evaluate(() => {
+          const cover = document.querySelector('.cover-wrap').getBoundingClientRect();
+          return { x: cover.x + cover.width / 2, width: cover.width, title: Number.parseFloat(getComputedStyle(document.getElementById('title')).fontSize),
+            brand: getComputedStyle(document.querySelector('.brand')).display, progress: getComputedStyle(document.getElementById('progress-area')).opacity };
+        });
+        assert.ok(Math.abs(gallery.x - 960) < 1); assert.ok(gallery.width > 500 && gallery.width < 540);
+        assert.ok(gallery.title < 30); assert.equal(gallery.brand, 'none'); assert.equal(gallery.progress, '0');
+        // Remote focus must not keep the toolbar/progress visible indefinitely.
+        await tv.locator('body').press('ArrowDown');
+        await tv.waitForFunction(() => getComputedStyle(document.getElementById('progress-area')).opacity === '1');
+        await tv.waitForFunction(() => getComputedStyle(document.getElementById('toolbar')).opacity === '0', undefined, { timeout: 10000 });
+        await tv.waitForFunction(() => getComputedStyle(document.getElementById('progress-area')).opacity === '0');
+      }
       await tv.screenshot({ path: path.join(output, layout + '.png') });
     }
     for (const width of [320, 390, 768]) {

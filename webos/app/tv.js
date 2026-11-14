@@ -15,7 +15,39 @@
     var result = await response.json(); if (!response.ok) throw new Error(result.error || 'Verbinding met de ontvanger verbroken.'); return result;
   }
   function message(value) { clearTimeout(errorTimer); messages.hidden = !value; messages.textContent = value || ''; }
-  function controls() { document.body.classList.add('controls-visible'); clearTimeout(toolbarTimer); toolbarTimer = setTimeout(function () { if (!document.getElementById('toolbar').contains(document.activeElement)) document.body.classList.remove('controls-visible'); }, 5000); }
+  function controls() { document.body.classList.add('controls-visible'); clearTimeout(toolbarTimer); toolbarTimer = setTimeout(function () { if (document.getElementById('toolbar').contains(document.activeElement)) document.activeElement.blur(); document.body.classList.remove('controls-visible'); }, 5000); }
+  function colorWash(image, source, retry) {
+    try {
+      var canvas = document.createElement('canvas'); canvas.width = canvas.height = 32;
+      var context = canvas.getContext('2d'); context.drawImage(image, 0, 0, 32, 32);
+      var pixels = context.getImageData(0, 0, 32, 32).data, buckets = {};
+      for (var i = 0; i < pixels.length; i += 4) {
+        var r = pixels[i] / 255, g = pixels[i + 1] / 255, b = pixels[i + 2] / 255;
+        var high = Math.max(r, g, b), low = Math.min(r, g, b), chroma = high - low;
+        if (pixels[i + 3] < 128 || high < .12 || low > .88 || chroma < .08) continue;
+        var hue = (high === r ? ((g - b) / chroma + 6) % 6 : high === g ? (b - r) / chroma + 2 : (r - g) / chroma + 4) * 60;
+        var key = Math.floor(hue / 24), bucket = buckets[key] || (buckets[key] = { hue: key * 24 + 12, weight: 0, light: 0, count: 0 });
+        bucket.weight += chroma * Math.sqrt(high); bucket.light += (high + low) / 2; bucket.count++;
+      }
+      var colors = Object.keys(buckets).map(function (key) { return buckets[key]; }).sort(function (a, b) { return b.weight - a.weight; });
+      if (!colors.length || document.getElementById('cover').dataset.source !== source) return;
+      function paint(color, delta) { return 'hsl(' + color.hue + ',68%,' + Math.min(61, Math.max(37, color.light / color.count * 100 + 9 + delta)) + '%)'; }
+      var base = colors[0], accent = colors[1] || base, edge = colors[2] || accent;
+      document.getElementById('color-wash').style.backgroundImage =
+        'radial-gradient(ellipse at 4% 0%,' + paint(accent, 7) + ',transparent 60%),' +
+        'radial-gradient(ellipse at 100% 100%,' + paint(edge, 7) + ',transparent 55%),' +
+        'linear-gradient(125deg,' + paint(base, 0) + ',' + paint(base, -6) + ')';
+      document.body.classList.add('palette-ready');
+    } catch (_) {
+      // External covers may lack CORS headers. Keep the blurred image in that
+      // case; never make cover display depend on canvas access or a proxy.
+      if (retry) {
+        var probe = new Image(); probe.crossOrigin = 'anonymous';
+        probe.onload = function () { if (document.getElementById('cover').dataset.source === source) colorWash(probe, source, false); };
+        probe.src = source;
+      }
+    }
+  }
   function paint(item) {
     var image = document.getElementById('cover');
     document.body.classList.toggle('no-track', !item);
@@ -24,17 +56,20 @@
     var source = item && item.artworkUrl || '';
     if (image.dataset.source === source) return;
     image.dataset.source = source;
+    document.body.classList.remove('palette-ready'); document.getElementById('color-wash').style.backgroundImage = '';
     image.hidden = true; document.getElementById('placeholder').hidden = false;
     document.getElementById('backdrop').style.backgroundImage = '';
     image.onload = function () {
       if (image.dataset.source !== source || !image.naturalWidth) return;
       image.hidden = false; document.getElementById('placeholder').hidden = true;
       document.getElementById('backdrop').style.backgroundImage = 'url(' + JSON.stringify(source) + ')';
+      colorWash(image, source, true);
     };
     image.onerror = function () {
       if (image.dataset.source !== source) return;
       image.hidden = true; document.getElementById('placeholder').hidden = false;
       document.getElementById('backdrop').style.backgroundImage = '';
+      document.body.classList.remove('palette-ready');
     };
     if (source) { image.alt = 'Albumhoes van ' + item.title; image.src = source; }
     else image.removeAttribute('src');
@@ -119,6 +154,8 @@
   audio.addEventListener('ended', function () { if (current && audio.ended) { wantPlay = false; report('ended'); } });
   audio.addEventListener('error', function () { if (current && audio.error) { loading = false; wantPlay = false; message('De stream is niet beschikbaar of dit audioformaat wordt niet ondersteund. Stuur het nummer opnieuw.'); report('error', 'Stream niet beschikbaar of audioformaat niet ondersteund.'); } });
   audio.addEventListener('timeupdate', progress);
+  audio.addEventListener('playing', function () { document.body.classList.add('is-playing'); });
+  ['pause', 'waiting', 'ended', 'error'].forEach(function (event) { audio.addEventListener(event, function () { document.body.classList.remove('is-playing'); }); });
   async function command(value) { if (preview) return; try { await api('/api/command', value); } catch (error) { message(error.message); } }
   document.getElementById('toggle').addEventListener('click', function () { if (audio.paused) { play(); command({ type: 'play' }); } else command({ type: 'pause' }); });
   document.getElementById('previous').addEventListener('click', function () { command({ type: 'previous' }); });

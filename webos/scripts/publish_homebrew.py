@@ -104,7 +104,9 @@ def main():
             gh("release", "upload", tag, *metadata, "--repo", repository, "--clobber")
         else:
             notes = output / "release-notes.md"
-            notes.write_text(f"Resona TV {version}: artwork and queue fixes.\n\n"
+            notes.write_text(f"Resona TV {version}: compact Gallery layout and artwork fixes.\n\n"
+                             "Gallery now uses a centered square cover, compact title/artist text, cover-derived color washes and a playback indicator. "
+                             "The progress bar and toolbar hide after inactivity, including remote focus. "
                              "Late artwork updates replace the placeholder without reloading audio; stale updates cannot overwrite another track. "
                              "The companion iPhone 2.0.3 build sends the real Resona queue (up to 100 online tracks) and moves the TV button above the player bar. "
                              "Next, Previous and automatic advancement work on the receiver-owned queue. "
