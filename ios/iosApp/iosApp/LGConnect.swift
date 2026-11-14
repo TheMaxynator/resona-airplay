@@ -36,9 +36,10 @@ struct LGPreparedQueue: Decodable {
     struct Track: Decodable {
         let id: String; let url: String; let title: String; let artist: String
         let artworkUrl: String?; let duration: Double
+        let waveformUrl: String?
         var payload: [String: Any] {
             ["id": id, "url": url, "title": title, "artist": artist,
-             "artworkUrl": artworkUrl ?? "", "duration": TVPlaybackModel.validTime(duration)]
+             "artworkUrl": artworkUrl ?? "", "waveformUrl": waveformUrl ?? "", "duration": TVPlaybackModel.validTime(duration)]
         }
     }
     let sourceId: String

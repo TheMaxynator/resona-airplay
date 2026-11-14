@@ -1318,11 +1318,20 @@ class PlayerController(
         val resolved = coroutineScope {
             entries.map { entry -> async {
                 workers.withPermit {
-                    if (entry.id == selected.id) entry to (entry.track to currentURL)
+                    if (entry.id == selected.id) {
+                        // Restored/cached entries may predate artist metadata support.
+                        val full = withTimeoutOrNull(6_000L) {
+                            try { withContext(Dispatchers.IO) { trackRepository.getTrack(entry.track.id) } }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { null }
+                        } ?: entry.track
+                        entry to (full to currentURL)
+                    }
                     else {
                         val result = withTimeoutOrNull(8_000L) {
                             try {
-                                val track = if (entry.track.media != null) entry.track
+                                val track = if (entry.track.media != null &&
+                                    (!entry.track.publisherMetadata?.artist.isNullOrBlank() || !entry.track.metadataArtist.isNullOrBlank())) entry.track
                                     else withContext(Dispatchers.IO) { trackRepository.getTrack(entry.track.id) }
                                 if (track.restrictionReason() != null) null
                                 else withContext(Dispatchers.IO) { trackRepository.resolvePlayableStream(track) }?.let { track to it.url }
@@ -1345,7 +1354,10 @@ class PlayerController(
             check(url.startsWith("https://") || url.startsWith("http://")) { "The TV needs online stream links." }
             tracks.put(JSONObject().apply {
                 put("id", "queue-${entry.id}-${track.id}")
-                put("title", track.title); put("artist", track.user.username)
+                put("title", track.title)
+                put("artist", track.publisherMetadata?.artist?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: track.metadataArtist?.trim()?.takeIf { it.isNotEmpty() } ?: track.user.username)
+                put("waveformUrl", track.waveformUrl ?: "")
                 put("url", url)
                 put("artworkUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
                 put("duration", track.durationMs.coerceAtLeast(0L) / 1000.0)

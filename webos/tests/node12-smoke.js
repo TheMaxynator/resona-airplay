@@ -3,6 +3,9 @@
 const http = require('http');
 const assert = require('assert');
 const receiver = require('../app/receiver-server').makeReceiver({ addresses: ['192.168.1.50'] });
+const peaks = require('../app/waveform').peaks;
+assert.strictEqual(peaks({ samples: [0, 140, 0], height: 140 })[1], 1);
+assert.strictEqual('𝙎𝙐𝘽𝘾𝙐𝙇𝙏𝙐𝙐𝙍'.normalize('NFKC'), 'SUBCULTUUR');
 function request(route, data, token, extra) {
   return new Promise((resolve, reject) => {
     const encoded = data === undefined ? null : Buffer.from(JSON.stringify(data));

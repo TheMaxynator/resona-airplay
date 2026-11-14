@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { makeReceiver } = require('../app/receiver-server');
+const { peaks, allowed } = require('../app/waveform');
 
 async function fixture(t, extra) {
   const receiver = makeReceiver(extra);
@@ -120,7 +121,8 @@ test('persists only display preferences, without stream URLs or pairing credenti
   await f.request('/api/command', { type: 'load', tracks }, token);
   assert.equal((await f.request('/api/command', { type: 'preferences', preferences: { layout: 'night', dim: 0.8, progress: false } }, token)).status, 200);
   const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'preferences.json')));
-  assert.deepEqual(saved, { layout: 'night', dim: 0.8, progress: false });
+  assert.deepEqual(saved, { layout: 'night', dim: 0.8, progress: false, waveform: false,
+    progressModes: { cinema: 'always', gallery: 'always', ambient: 'always', night: 'always' } });
   assert.deepEqual(fs.readdirSync(dataDir), ['preferences.json']);
   assert.equal((await f.request('/api/command', { type: 'preferences', preferences: { dim: 5 } }, token)).status, 400);
 });
@@ -170,7 +172,50 @@ test('an app update replaces only its own helper on the requested port', { timeo
   const original = await start(target), unrelated = await start(other);
   const exited = new Promise(resolve => original.once('exit', resolve));
   await start(target, true); await exited;
-  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.1.2');
+  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.1.3');
   assert.equal((await fetch('http://127.0.0.1:' + other + '/health')).status, 200);
   assert.equal(unrelated.exitCode, null); assert.equal(unrelated.signalCode, null);
+});
+test('normalizes the actual stylized uploader name without stripping accents or other scripts', async t => {
+  const f = await fixture(t), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks: [Object.assign({}, tracks[0], { artist: '𝙎𝙐𝘽𝘾𝙐𝙇𝙏𝙐𝙐𝙍' })] }, token);
+  assert.equal((await f.display()).track.artist, 'SUBCULTUUR');
+  await f.request('/api/command', { type: 'load', tracks: [Object.assign({}, tracks[0], { artist: 'Björk · Zoë · 東京 🎶' })] }, token);
+  assert.equal((await f.display()).track.artist, 'Björk · Zoë · 東京 🎶');
+});
+test('saves separate progress modes, reloads them and rejects invalid patches atomically', async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resona-modes-')); t.after(() => fs.rmSync(dataDir, { force: true, recursive: true }));
+  const f = await fixture(t, { dataDir }), token = await f.pair();
+  await f.request('/api/command', { type: 'preferences', preferences: { progressModes: { cinema: 'auto', gallery: 'always', ambient: 'auto', night: 'always' }, waveform: true } }, token);
+  const saved = (await f.display()).preferences;
+  for (const progressModes of [{ gallery: 'wrong' }, { missing: 'auto' }, [], null]) {
+    assert.equal((await f.request('/api/command', { type: 'preferences', preferences: { layout: 'night', progressModes } }, token)).status, 400);
+    assert.deepEqual((await f.display()).preferences, saved);
+  }
+  const restarted = await fixture(t, { dataDir }); assert.deepEqual((await restarted.display()).preferences, saved);
+  await restarted.request('/api/command', { type: 'preferences', preferences: { progressModes: { gallery: 'auto' } } }, restarted.receiver.getDisplayToken());
+  assert.equal((await restarted.display()).preferences.progressModes.cinema, 'auto');
+  assert.equal((await f.display()).preferences.progressModes.gallery, 'always');
+});
+test('compact polling skips unchanged inline artwork but resynchronizes new covers and tracks', async t => {
+  const f = await fixture(t), token = await f.pair(), cover = 'data:image/jpeg;base64,' + 'A'.repeat(80000);
+  const load = await f.request('/api/command', { type: 'load', tracks: [Object.assign({}, tracks[0], { artworkUrl: cover }), tracks[1]] }, token);
+  const full = await f.display();
+  const compact = (await f.request('/api/display?after=' + load.data.sequence + '&known=' + full.trackVersion, undefined, f.receiver.getDisplayToken())).data;
+  assert.equal(compact.track.artworkUrl, undefined); assert.equal(compact.track.url, undefined);
+  assert.equal(compact.track.title, full.track.title); assert.ok(JSON.stringify(compact).length < JSON.stringify(full).length / 20);
+  await f.request('/api/command', { type: 'artwork', generation: full.generation, trackId: 'first', artworkRevision: 1, artworkUrl: cover }, token);
+  const changed = (await f.request('/api/display?known=' + full.trackVersion, undefined, f.receiver.getDisplayToken())).data;
+  assert.equal(changed.track.artworkUrl, cover);
+  await f.request('/api/command', { type: 'next' }, token);
+  const next = (await f.request('/api/display?known=' + changed.trackVersion, undefined, f.receiver.getDisplayToken())).data;
+  assert.equal(next.track.url, tracks[1].url);
+});
+test('waveform data is bounded, peak-preserving, and restricted to the public SoundCloud waveform host', () => {
+  const samples = new Array(1800).fill(0); samples[75] = 140;
+  const result = peaks({ samples, height: 140 });
+  assert.equal(result.length, 240); assert.equal(Math.max(...result), 1);
+  for (const data of [{ samples: [], height: 140 }, { samples: [NaN], height: 1 }, { samples: [141], height: 140 }, { samples: [0], height: 0 }, { samples: new Array(20001).fill(0), height: 140 }]) assert.throws(() => peaks(data));
+  assert.equal(allowed('https://wave.sndcdn.com/BD4HLDld5F83_m.json'), true);
+  for (const value of ['http://wave.sndcdn.com/x.json', 'https://evil.example/x.json', 'https://wave.sndcdn.com.evil.example/x.json', 'file:///etc/passwd', 'https://user:pass@wave.sndcdn.com/x.json']) assert.equal(allowed(value), false);
 });
