@@ -99,3 +99,14 @@ test('serves MP3 byte ranges so native media players can seek', async t => {
   assert.deepEqual(Buffer.from(await result.arrayBuffer()), bytes.subarray(100, 300));
   assert.equal((await fetch(f.base + '/demo.mp3', { headers: { Range: 'bytes=99999999-' } })).status, 416);
 });
+test('stops an inactive display receiver even when a phone keeps its HTTP connection alive', { timeout: 15000 }, async t => {
+  let now = Date.now();
+  const f = await fixture(t, { now: () => now, idleTimeout: 120000 });
+  const token = await f.pair();
+  const closed = new Promise(resolve => f.receiver.server.once('close', resolve));
+  const polling = setInterval(() => f.request('/api/state', undefined, token).catch(() => {}), 200);
+  t.after(() => clearInterval(polling));
+  now += 121000;
+  await closed;
+  assert.equal(f.receiver.server.listening, false);
+});
