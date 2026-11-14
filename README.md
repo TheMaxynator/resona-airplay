@@ -26,7 +26,7 @@ The **AirPlay iOS** workflow typechecks the native display, builds an unsigned `
 
 The test app has a separate bundle identifier (`com.themaxynator.resona.airplay`) and display name **Resona TV**. It installs alongside upstream and starts with its own app data. Its build number is 18; upstream v2.0 is build 17.
 
-A simulator build cannot verify a physical LG AirPlay receiver. The [research, limitations and device test checklist](AIRPLAY.md) distinguish implementation from verified hardware behavior. External-display behavior inside LiveContainer has not been verified; a directly sideloaded installation is the reference test configuration.
+A simulator build cannot verify a physical LG AirPlay receiver. The [research, limitations and device test checklist](AIRPLAY.md) distinguish implementation from verified hardware behavior. LiveContainer has an [open iOS 27 external-display report](https://github.com/LiveContainer/LiveContainer/issues/1694). This fork has not been physically tested there; a directly sideloaded installation is the reference configuration.
 
 ## License
 
