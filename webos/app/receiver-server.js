@@ -230,8 +230,25 @@ function makeReceiver(options) {
       }
       if (request.method === 'GET' && staticFiles[route]) {
         const entry = staticFiles[route], bytes = fs.readFileSync(path.join(__dirname, entry[0]));
-        response.writeHead(200, { 'Content-Type': entry[1], 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-cache',
-          'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src https: http:; connect-src 'self'; frame-ancestors 'none'" }); response.end(bytes); return;
+        const headers = { 'Content-Type': entry[1], 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-cache', 'Content-Length': bytes.length,
+          'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src https: http:; connect-src 'self'; frame-ancestors 'none'" };
+        if (entry[1] === 'audio/mpeg') {
+          headers['Accept-Ranges'] = 'bytes';
+          if (request.headers.range) {
+            const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range);
+            let start = range && range[1] ? Number(range[1]) : 0;
+            let end = range && range[2] ? Number(range[2]) : bytes.length - 1;
+            if (range && !range[1] && range[2]) { start = Math.max(0, bytes.length - Number(range[2])); end = bytes.length - 1; }
+            if (!range || (!range[1] && !range[2]) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= bytes.length || end < start) {
+              response.writeHead(416, { 'Content-Range': 'bytes */' + bytes.length, 'Content-Length': 0 }); response.end(); return;
+            }
+            end = Math.min(end, bytes.length - 1);
+            headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + bytes.length;
+            headers['Content-Length'] = end - start + 1;
+            response.writeHead(206, headers); response.end(bytes.slice(start, end + 1)); return;
+          }
+        }
+        response.writeHead(200, headers); response.end(bytes); return;
       }
       fail('Niet gevonden.', 404);
     } catch (caught) { if (!response.headersSent) respond(response, caught.status || 500, { error: caught.status ? caught.message : 'De tv kon de opdracht niet verwerken.' }); else response.end(); }
