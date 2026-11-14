@@ -6,9 +6,21 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const LAYOUTS = ['cinema', 'gallery', 'ambient', 'night'];
-const DEFAULTS = { layout: 'cinema', dim: 0.48, progress: true };
+const DEFAULTS = { layout: 'cinema', dim: 0.48, progress: true, waveform: false };
+function progressModes() { return { cinema: 'always', gallery: 'always', ambient: 'always', night: 'always' }; }
+function modePatch(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).some(key => LAYOUTS.indexOf(key) < 0 || ['auto', 'always'].indexOf(value[key]) < 0)) fail('Ongeldige balkinstelling.');
+  return value;
+}
+function displayText(value, fallback) { return String(value || fallback || '').normalize('NFKC').slice(0, 300); }
+function waveformLink(value) {
+  if (typeof value !== 'string' || value.length > 2048) return '';
+  try { const u = new URL(value); return u.protocol === 'https:' && u.hostname === 'wave.sndcdn.com' &&
+    !u.username && !u.password && !u.port && /\.json$/.test(u.pathname) ? u.href : ''; } catch (_) { return ''; }
+}
 function fail(message, status) { const error = new Error(message); error.status = status || 400; throw error; }
 function finite(value, min, max) { return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max; }
 function url(value, artwork) {
@@ -23,8 +35,8 @@ function track(value, index) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('Ongeldig nummer.');
   return {
     id: String(value.id || ('track-' + index)).slice(0, 128),
-    title: String(value.title || 'Onbekend nummer').slice(0, 300),
-    artist: String(value.artist || '').slice(0, 300),
+    title: displayText(value.title, 'Onbekend nummer'),
+    artist: displayText(value.artist), waveformUrl: waveformLink(value.waveformUrl),
     url: url(value.url, false), artworkUrl: value.artworkUrl ? url(value.artworkUrl, true) : '',
     duration: finite(value.duration, 0, 604800) ? value.duration : 0
   };
@@ -43,7 +55,8 @@ function makeReceiver(options) {
   let revision = 0, generation = 0, queue = [], index = -1, position = 0;
   let desiredPlaying = false, state = 'idle', duration = 0, error = '';
   let artworkRevision = 0;
-  let preferences = Object.assign({}, DEFAULTS), commands = [], sequence = 0;
+  let preferences = Object.assign({}, DEFAULTS, { progressModes: progressModes() }), commands = [], sequence = 0;
+  function appearance() { return Object.assign({}, preferences, { progressModes: Object.assign({}, preferences.progressModes) }); }
   const startedAt = clock();
   let lastDisplay = 0;
   const dataDir = options.dataDir;
@@ -53,6 +66,8 @@ function makeReceiver(options) {
       if (LAYOUTS.indexOf(saved.layout) >= 0) preferences.layout = saved.layout;
       if (finite(saved.dim, 0.15, 0.9)) preferences.dim = saved.dim;
       if (typeof saved.progress === 'boolean') preferences.progress = saved.progress;
+      if (typeof saved.waveform === 'boolean') preferences.waveform = saved.waveform;
+      if (saved.progressModes) Object.assign(preferences.progressModes, modePatch(saved.progressModes));
     } catch (_) {}
   }
   function newCode() { code = String(100000 + crypto.randomBytes(4).readUInt32BE(0) % 900000); codeExpires = clock() + 300000; }
@@ -62,10 +77,11 @@ function makeReceiver(options) {
   function snapshot(includeURLs) {
     const item = current();
     return { protocol: 1, version: VERSION, revision, generation, sequence, receiverOnline: online(),
-      track: item ? (includeURLs ? item : { id: item.id, title: item.title, artist: item.artist, artworkUrl: item.artworkUrl, duration: item.duration }) : null,
+      trackVersion: generation + ':' + artworkRevision,
+      track: item ? (includeURLs ? item : { id: item.id, title: item.title, artist: item.artist, artworkUrl: item.artworkUrl, waveformAvailable: !!item.waveformUrl, duration: item.duration }) : null,
       queue: queue.map((t, i) => ({ id: t.id, title: t.title, artist: t.artist, current: i === index })),
       index, state, position, duration: duration || (item && item.duration) || 0, desiredPlaying,
-      error, preferences: Object.assign({}, preferences), pairedDevices: sessions.size };
+      error, preferences: appearance(), pairedDevices: sessions.size };
   }
   function changed() { revision++; }
   function enqueue(type, extra) {
@@ -103,12 +119,15 @@ function makeReceiver(options) {
       if (patch.layout !== undefined && LAYOUTS.indexOf(patch.layout) < 0) fail('Onbekend ontwerp.');
       if (patch.dim !== undefined && !finite(patch.dim, 0.15, 0.9)) fail('Ongeldige helderheid.');
       if (patch.progress !== undefined && typeof patch.progress !== 'boolean') fail('Ongeldige voortgangsinstelling.');
-      ['layout', 'dim', 'progress'].forEach(k => { if (patch[k] !== undefined) preferences[k] = patch[k]; });
+      if (patch.waveform !== undefined && typeof patch.waveform !== 'boolean') fail('Ongeldige golfvorminstelling.');
+      if (patch.progressModes !== undefined) modePatch(patch.progressModes);
+      ['layout', 'dim', 'progress', 'waveform'].forEach(k => { if (patch[k] !== undefined) preferences[k] = patch[k]; });
+      if (patch.progressModes) Object.assign(preferences.progressModes, patch.progressModes);
       if (dataDir) {
         fs.mkdirSync(dataDir, { recursive: true, mode: 448 });
         fs.writeFileSync(path.join(dataDir, 'preferences.json'), JSON.stringify(preferences), { mode: 384 });
       }
-      enqueue('preferences', { preferences });
+      enqueue('preferences', { preferences: appearance() });
     } else {
       if (!current()) fail('Kies eerst een nummer.');
       if (value.type === 'play' || value.type === 'pause') {
@@ -166,6 +185,7 @@ function makeReceiver(options) {
     '/': ['remote.html', 'text/html'], '/remote': ['remote.html', 'text/html'],
     '/remote.js': ['remote.js', 'application/javascript'], '/remote.css': ['remote.css', 'text/css'],
     '/tv.js': ['tv.js', 'application/javascript'], '/tv.css': ['tv.css', 'text/css'],
+    '/waveform.js': ['waveform.js', 'application/javascript'],
     '/vendor/qrcode.js': ['vendor/qrcode.js', 'application/javascript'],
     '/vendor/webOSTV.js': ['vendor/webOSTV.js', 'application/javascript'],
     '/demo-cover.svg': ['demo-cover.svg', 'image/svg+xml'], '/demo.mp3': ['demo.mp3', 'audio/mpeg']
@@ -189,6 +209,11 @@ function makeReceiver(options) {
         lastDisplay = clock(); if (clock() > codeExpires) newCode();
         const after = Number(parsed.searchParams.get('after') || 0);
         const state = snapshot(true);
+        // Old clients still receive a full snapshot. The TV can avoid repeatedly
+        // serializing/transferring the same inline cover and stream URL.
+        if (state.track && parsed.searchParams.get('known') === state.trackVersion) {
+          state.track = { id: state.track.id, title: state.track.title, artist: state.track.artist, duration: state.track.duration };
+        }
         return respond(response, 200, Object.assign(state, { code, codeExpires, urls: addresses().map(ip => 'http://' + ip + ':' + server.address().port), commands: commands.filter(c => c.sequence > after) }));
       }
       if (request.method === 'POST') {
