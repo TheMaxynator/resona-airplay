@@ -81,3 +81,8 @@ For the hardware test, record the iPhone installation method (direct sideload or
 - [Shairport metadata display](https://github.com/AlainGourves/shairport-metadata-display)
 
 - LiveContainer: [external display/AirPlay report #1694](https://github.com/LiveContainer/LiveContainer/issues/1694) (user report, not a maintainer-confirmed fix)
+
+
+## LG artwork and queue fix candidate (2026-11-14)
+
+The user confirmed basic playback controls and layouts on an LG G3 with webOS 23 in webOS 0.1.0 / iPhone 2.0.2. That candidate dropped artwork when the image was not ready or exceeded the byte limit, and its one-track native handoff left Next without another entry. The 0.1.1 / 2.0.3 build resolves a real queue snapshot (up to 100 online entries), preserves its selected index, supports guarded late artwork updates without reloading audio, uses true pixel-sized bounded JPEGs, and moves the TV button above the actual Compose player/dock inset. These fixes require both app updates and a hardware retest.
