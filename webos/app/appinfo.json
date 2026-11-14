@@ -1,0 +1,17 @@
+{
+  "id": "com.themaxynator.resonatv",
+  "version": "0.1.0",
+  "vendor": "Resona community fork",
+  "type": "web",
+  "main": "index.html",
+  "title": "Resona TV",
+  "appDescription": "Album artwork and music receiver",
+  "icon": "icon.png",
+  "largeIcon": "large-icon.png",
+  "resolution": "1920x1080",
+  "bgColor": "#101015",
+  "iconColor": "#101015",
+  "disableBackHistoryAPI": true,
+  "screenSaverProperties": { "preferredType": 3 },
+  "useGalleryMode": true
+}
