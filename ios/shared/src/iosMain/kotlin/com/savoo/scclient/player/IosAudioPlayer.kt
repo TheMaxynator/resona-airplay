@@ -52,11 +52,15 @@ import platform.CoreMedia.CMTime
 import platform.CoreMedia.CMTimeGetSeconds
 import platform.CoreMedia.CMTimeMakeWithSeconds
 import platform.Foundation.NSError
+import platform.Foundation.NSData
+import platform.Foundation.NSHTTPURLResponse
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSNumber
 import platform.Foundation.NSOperationQueue
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLSession
+import platform.Foundation.NSURLSessionDataTask
+import platform.Foundation.dataWithContentsOfURL
 import platform.Foundation.dataTaskWithURL
 import platform.MediaPlayer.MPChangePlaybackPositionCommandEvent
 import platform.MediaPlayer.MPMediaItemArtwork
@@ -110,7 +114,10 @@ class IosAudioPlayer(private val effects: SoundEffects) : AudioPlayer {
     private var wantsPlay = false
     private var info: NowPlayingInfo? = null
     private var artwork: MPMediaItemArtwork? = null
+    private var artworkImage: UIImage? = null
     private var artworkUrl: String? = null
+    private var artworkTask: NSURLSessionDataTask? = null
+    private var artworkGeneration = 0L
     private var itemObservers: List<NSObjectProtocol> = emptyList()
     private var failureReported = false
 
@@ -176,7 +183,10 @@ class IosAudioPlayer(private val effects: SoundEffects) : AudioPlayer {
     override fun updateInfo(info: NowPlayingInfo) {
         this.info = info
         if (artworkUrl != info.artworkUrl) {
+            artworkTask?.cancel()
+            artworkGeneration++
             artwork = null
+            artworkImage = null
             artworkUrl = info.artworkUrl
             loadArtwork(info.artworkUrl)
         }
@@ -208,6 +218,14 @@ class IosAudioPlayer(private val effects: SoundEffects) : AudioPlayer {
         removeItemObservers()
         player.replaceCurrentItemWithPlayerItem(null)
         _status.value = PlaybackStatus()
+        artworkTask?.cancel()
+        artworkGeneration++
+        info = null
+        artwork = null
+        artworkImage = null
+        artworkUrl = null
+        MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = null
+        publishTVSnapshot()
     }
 
     private fun pitchAlgorithm() = if (pitch != 1f) AVAudioTimePitchAlgorithmVarispeed else AVAudioTimePitchAlgorithmTimeDomain
@@ -280,18 +298,58 @@ class IosAudioPlayer(private val effects: SoundEffects) : AudioPlayer {
         )
         artwork?.let { map[MPMediaItemPropertyArtwork] = it }
         MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = map
+        publishTVSnapshot()
     }
 
     private fun loadArtwork(url: String?) {
-        val nsUrl = url?.let { NSURL.URLWithString(it) } ?: return
-        NSURLSession.sharedSession.dataTaskWithURL(nsUrl) { data, _, _ ->
-            val image = data?.let { UIImage.imageWithData(it) } ?: return@dataTaskWithURL
+        if (url == null) return
+        val generation = artworkGeneration
+        // Offline imports store absolute paths; SoundCloud's default -large is only 100px.
+        val preferred = if (url.startsWith("http")) url.replace("-large", "-t500x500") else url
+        fun accept(image: UIImage) {
             dispatch_async(dispatch_get_main_queue()) {
-                if (artworkUrl != url) return@dispatch_async
+                if (artworkGeneration != generation || artworkUrl != url) return@dispatch_async
+                artworkImage = image
                 artwork = MPMediaItemArtwork(boundsSize = image.size) { _ -> image }
                 updateNowPlaying()
             }
-        }.resume()
+        }
+        val nsUrl = if (preferred.startsWith("/")) NSURL.fileURLWithPath(preferred) else NSURL.URLWithString(preferred)
+        if (nsUrl == null) return
+        if (nsUrl.fileURL) {
+            NSData.dataWithContentsOfURL(nsUrl)?.let { UIImage.imageWithData(it) }?.let(::accept)
+            return
+        }
+        fun request(candidate: NSURL, allowFallback: Boolean) {
+            artworkTask = NSURLSession.sharedSession.dataTaskWithURL(candidate) { data, response, _ ->
+                val valid = (response as? NSHTTPURLResponse)?.statusCode?.let { it in 200..299 } ?: false
+                val image = if (valid) data?.let { UIImage.imageWithData(it) } else null
+                if (image != null) {
+                    accept(image)
+                } else if (allowFallback) {
+                    dispatch_async(dispatch_get_main_queue()) {
+                        if (artworkGeneration == generation && artworkUrl == url) {
+                            NSURL.URLWithString(url)?.let { request(it, false) }
+                        }
+                    }
+                }
+            }
+            artworkTask?.resume()
+        }
+        request(nsUrl, preferred != url)
+    }
+
+    // Native Swift display code observes the existing player, never starts a second audio stream.
+    private fun publishTVSnapshot() {
+        val snapshot = mutableMapOf<Any?, Any?>(
+            "player" to player,
+            "title" to (info?.title ?: ""),
+            "artist" to (info?.artist ?: ""),
+            "duration" to NSNumber(double = _status.value.durationMs.coerceAtLeast(info?.durationMs ?: 0L) / 1000.0),
+            "hasTrack" to NSNumber(bool = info != null),
+        )
+        artworkImage?.let { snapshot["artwork"] = it }
+        NSNotificationCenter.defaultCenter.postNotificationName("ResonaPlaybackSnapshot", null, snapshot)
     }
 
     private fun registerRemoteCommands() {
