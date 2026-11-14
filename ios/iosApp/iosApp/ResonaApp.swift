@@ -27,6 +27,7 @@ struct ResonaApp: App {
             } else {
                 ComposeView()
                     .ignoresSafeArea()
+                    .onAppear { LGConnectClient.shared.start() }
                     .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ResonaOpenTVSettings"))) { _ in showingTVSettings = true }
                     .sheet(isPresented: $showingTVSettings) { TVSettingsView(model: tvModel) }
             }

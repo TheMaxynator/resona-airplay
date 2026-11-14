@@ -135,12 +135,40 @@ const { makeReceiver } = require('../app/receiver-server');
     // The queue is resolved before handoff; the phone can disappear without stopping queue advancement.
     await phone.locator('#queue-form').locator('..').getByText('Wachtrij importeren', { exact: true }).click();
     await phone.getByLabel('Nummers als JSON').fill(JSON.stringify([
-      { id: 'queue-first', title: 'First in queue', artist: 'Test', url: base + '/demo.mp3', duration: 20 },
+      { id: 'queue-first', sourceId: '42', title: 'First in queue', artist: 'Test', url: base + '/demo.mp3', artworkUrl: base + '/demo-cover.svg', duration: 20 },
       { id: 'queue-second', title: '<img src=x onerror=alert(1)>', artist: 'Next without phone', url: base + '/demo.mp3', duration: 20 }
     ]));
     await phone.getByRole('button', { name: 'Wachtrij naar tv', exact: true }).click();
     await tv.getByRole('heading', { name: 'First in queue', exact: true }).waitFor();
     await tv.waitForFunction(() => !document.getElementById('audio').paused);
+    await phone.getByRole('button', { name: 'Pauzeren', exact: true }).click();
+    await tv.waitForFunction(() => document.getElementById('audio').paused);
+    const unchangedGeneration = receiver.snapshot().generation;
+    const unchangedTime = await tv.locator('#audio').evaluate(audio => audio.currentTime);
+    const unchangedSource = await tv.locator('#audio').getAttribute('src');
+    const secondContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const secondPhone = await secondContext.newPage();
+    secondPhone.on('pageerror', error => errors.push(error.message));
+    await secondPhone.goto(base + '/remote');
+    await secondPhone.getByLabel('Koppelcode').fill(receiver.getCode());
+    await secondPhone.getByRole('button', { name: 'Verbinden', exact: true }).click();
+    await secondPhone.getByText('Verbonden met LG', { exact: true }).waitFor();
+    await phone.getByLabel('Nummers als JSON').fill(JSON.stringify([{ id: 'queue-third', title: 'Added while listening', artist: 'Guest', url: base + '/demo.mp3', duration: 20 }]));
+    await phone.getByRole('button', { name: 'Achteraan toevoegen', exact: true }).click();
+    await secondPhone.getByRole('button', { name: 'Speel Added while listening', exact: true }).waitFor();
+    await secondPhone.getByRole('button', { name: 'Verplaats omhoog: Added while listening', exact: true }).click();
+    await phone.waitForFunction(() => document.querySelectorAll('#queue-list .queue-title')[1]?.textContent.includes('Added while listening'));
+    await phone.screenshot({ path: path.join(output, 'shared-queue-phone.png'), fullPage: true });
+    await phone.getByRole('button', { name: 'Verwijder: Added while listening', exact: true }).click();
+    await secondPhone.getByRole('button', { name: 'Speel Added while listening', exact: true }).waitFor({ state: 'detached' });
+    assert.equal(receiver.snapshot().generation, unchangedGeneration);
+    assert.equal(await tv.locator('#audio').getAttribute('src'), unchangedSource);
+    assert.ok(await tv.locator('#audio').evaluate((audio, position) => audio.paused && Math.abs(audio.currentTime - position) < .3, unchangedTime));
+    await secondPhone.getByRole('button', { name: 'Speel <img src=x onerror=alert(1)>', exact: true }).click();
+    await tv.getByRole('heading', { name: '<img src=x onerror=alert(1)>', exact: true }).waitFor();
+    await phone.locator('#remote-previous').click();
+    await tv.getByRole('heading', { name: 'First in queue', exact: true }).waitFor();
+    await secondContext.close();
     await phone.locator('#remote-next').click();
     await tv.getByRole('heading', { name: '<img src=x onerror=alert(1)>', exact: true }).waitFor();
     await phone.locator('#remote-previous').click();
@@ -153,7 +181,7 @@ const { makeReceiver } = require('../app/receiver-server');
     assert.equal(await tv.locator('#cover').isVisible(), false);
     assert.equal(receiver.snapshot().index, 1);
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(output, 'browser-results.json'), JSON.stringify({ result: 'passed', layouts: 4, progressModesPerLayout: ['auto', 'always'], waveform: 'static bitmaps with compositor-only progress', normalizedArtist: true, phoneWidths: [320, 390, 768], realAudio: 'MP3', controls: ['pair', 'play', 'pause', 'seek', 'layout', 'next', 'previous'], lateArtworkWithoutReload: true, autonomousQueue: true, errors }, null, 2));
+    fs.writeFileSync(path.join(output, 'browser-results.json'), JSON.stringify({ result: 'passed', layouts: 4, progressModesPerLayout: ['auto', 'always'], waveform: 'static bitmaps with compositor-only progress', normalizedArtist: true, phoneWidths: [320, 390, 768], realAudio: 'MP3', controls: ['pair', 'play', 'pause', 'seek', 'layout', 'next', 'previous'], lateArtworkWithoutReload: true, autonomousQueue: true, sharedQueue: ['append', 'reorder', 'remove', 'play', 'two controllers'], errors }, null, 2));
     console.log('PASS: pairing, real MP3 playback, pause/seek, layouts, late artwork without audio reload, next/previous, autonomous queue and safe text.');
   } catch (error) {
     if (!tv.isClosed()) {

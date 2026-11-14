@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -93,6 +94,11 @@ data class PlaybackState(
     // actually playing, which the Queue screen needs to highlight the right row.
     val queueIndex: Int = -1,
     val loop: LoopRegion? = null,
+    val remoteTV: Boolean = false,
+    val remoteOnline: Boolean = false,
+    val remoteMessage: String = "",
+    val remoteQueueRevision: Long = -1,
+    val remotePlaybackState: String = "",
 )
 
 data class LoopRegion(val startMs: Long, val endMs: Long)
@@ -124,7 +130,19 @@ class PlayerController(
     private var seedColorUrl: String? = null
 
     private val _state = MutableStateFlow(PlaybackState())
-    val state = _state.asStateFlow()
+    val state = combine(_state, TVRemoteSession.state) { local, remote ->
+        if (!remote.active) local else local.copy(
+            currentTrack = remote.track ?: local.currentTrack.takeIf { remote.queueRevision < 0 },
+            isPlaying = remote.online && remote.state == "playing",
+            isBuffering = !remote.online || remote.state in listOf("loading", "buffering"),
+            isRetryingNetwork = !remote.online, positionMs = remote.positionMs, durationMs = remote.durationMs,
+            hasNext = remote.index >= 0 && remote.index + 1 < remote.slots.size,
+            hasPrev = remote.index > 0, queueIndex = remote.index, queueTag = "tv:LG TV",
+            loadingTrackId = null, shuffleEnabled = false, repeatMode = Player.REPEAT_MODE_OFF,
+            playbackSpeed = 1f, loop = null, remoteTV = true, remoteOnline = remote.online, remoteMessage = remote.message,
+            remoteQueueRevision = remote.queueRevision, remotePlaybackState = remote.state,
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, PlaybackState())
     private val _seedColor = MutableStateFlow<Color?>(null)
     val seedColor = _seedColor.asStateFlow()
     private val _skippedTrackEvents = MutableSharedFlow<SkippedTrack>(extraBufferCapacity = 1)
@@ -134,7 +152,7 @@ class PlayerController(
     val expandRequests = _expandRequests.asSharedFlow()
 
     private fun expandIfCurrent(trackId: Long): Boolean {
-        if (_state.value.currentTrack?.id != trackId) return false
+        if (state.value.currentTrack?.id != trackId) return false
         _expandRequests.tryEmit(Unit)
         return true
     }
@@ -145,7 +163,10 @@ class PlayerController(
         .map { list -> list.map { it.trackId }.toSet() }
         .stateIn(scope, SharingStarted.Eagerly, emptySet())
     private val _queueEntries = MutableStateFlow<List<QueueEntry>>(emptyList())
-    val queueEntries = _queueEntries.asStateFlow()
+    val queueEntries = combine(_queueEntries, TVRemoteSession.state) { local, remote ->
+        if (remote.active) remote.slots.map { it.entry } else local
+    }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+    private var tvResolveJob: kotlinx.coroutines.Job? = null
     private val _sleepTimerRemainingMs = MutableStateFlow<Long?>(null)
     val sleepTimerRemainingMs = _sleepTimerRemainingMs.asStateFlow()
     private val _sleepAfterCurrentTrack = MutableStateFlow(false)
@@ -821,6 +842,7 @@ class PlayerController(
 
     fun play(track: Track) {
         if (expandIfCurrent(track.id)) return
+        if (sendTVTracks(listOf(track), "load")) return
         knownReason(track)?.let { reason ->
             DebugLog.log(TAG, "play: id=${track.id} title=${track.title} known unavailable ($reason), not touching playback")
             _skippedTrackEvents.tryEmit(SkippedTrack(track, reason))
@@ -859,6 +881,7 @@ class PlayerController(
         if (sourceTracks.isEmpty()) return
         val requested = sourceTracks[startIndex.coerceIn(0, sourceTracks.lastIndex)]
         if (startExact && startPositionMs == 0L && expandIfCurrent(requested.id)) return
+        if (sendTVTracks(sourceTracks, "load", startIndex = startIndex, startPositionMs = startPositionMs)) return
         if (startExact) {
             knownReason(requested)?.let { reason ->
                 DebugLog.log(TAG, "playQueue: requested id=${requested.id} title=${requested.title} unavailable ($reason), not starting a queue")
@@ -932,6 +955,7 @@ class PlayerController(
                 return@launch
             }
             playQueue(tracks, startIndex, repeatAll = repeatAll, tag = FAVORITES_QUEUE_TAG)
+            if (TVRemoteSession.state.value.active) return@launch
             if (loaded.third && queue.getOrNull(queueIndex)?.track?.id == track.id) {
                 favoritesContinuation = FavoritesContinuation(
                     filter = filter,
@@ -1003,6 +1027,7 @@ class PlayerController(
     }
 
     fun skipToNext() {
+        if (TVRemoteSession.command("next")) return
         controller?.let { if (it.hasNextMediaItem()) it.seekToNext() }
     }
 
@@ -1019,14 +1044,17 @@ class PlayerController(
     }
 
     fun playNext(tracks: List<Track>) {
+        if (sendTVTracks(tracks, "queue-add", "next")) return
         insertIntoQueue(tracks, atEnd = false)
     }
 
     fun addToQueue(tracks: List<Track>) {
+        if (sendTVTracks(tracks, "queue-add", "last")) return
         insertIntoQueue(tracks, atEnd = true)
     }
 
     private fun insertIntoQueue(sourceTracks: List<Track>, atEnd: Boolean) {
+        if (sendTVTracks(sourceTracks, "queue-add", if (atEnd) "last" else "next")) return
         val tracks = sourceTracks.filter { knownReason(it) == null }
         if (tracks.isEmpty()) return
         if (queue.isEmpty() || queueIndex !in queue.indices) {
@@ -1091,6 +1119,7 @@ class PlayerController(
     }
 
     fun skipToPrevious() {
+        if (TVRemoteSession.command("previous")) return
         controller?.seekToPrevious()
     }
 
@@ -1098,6 +1127,7 @@ class PlayerController(
     // existing window in place (no re-resolve, no audible hiccup), unlike the setMediaItems()-based rebuilds
     // used elsewhere in this file for bulk queue changes.
     fun moveQueueItem(from: Int, to: Int) {
+        if (TVRemoteSession.queueCommand("queue-reorder", from, to)) return
         if (from !in queue.indices || to !in queue.indices || from == to) return
         val item = queue.removeAt(from)
         queue.add(to, item)
@@ -1118,6 +1148,7 @@ class PlayerController(
     // (ExoPlayer auto-advances to whatever now occupies that slot) - queueIndex is deliberately NOT adjusted
     // by hand for that case below; it's resynced straight from the controller once the removal has applied.
     fun removeQueueItem(index: Int) {
+        if (TVRemoteSession.queueCommand("queue-remove", index)) return
         if (index !in queue.indices) return
         val removed = queue.removeAt(index)
         if (originalOrder.isNotEmpty()) {
@@ -1149,6 +1180,7 @@ class PlayerController(
     // Jumps playback straight to an existing queue slot (tap-to-play in the Queue screen) without
     // reshuffling or otherwise touching the rest of the queue.
     fun playFromQueue(index: Int) {
+        if (TVRemoteSession.queueCommand("queue-play", index)) return
         if (index !in queue.indices) return
         val entry = queue[index]
         knownReason(entry.track)?.let { reason ->
@@ -1353,13 +1385,14 @@ class PlayerController(
             val (track, url) = item
             check(url.startsWith("https://") || url.startsWith("http://")) { "The TV needs online stream links." }
             tracks.put(JSONObject().apply {
-                put("id", "queue-${entry.id}-${track.id}")
+                put("id", "queue-${entry.id}-${track.id}"); put("sourceId", track.id.toString())
                 put("title", track.title)
                 put("artist", track.publisherMetadata?.artist?.trim()?.takeIf { it.isNotEmpty() }
                     ?: track.metadataArtist?.trim()?.takeIf { it.isNotEmpty() } ?: track.user.username)
                 put("waveformUrl", track.waveformUrl ?: "")
                 put("url", url)
                 put("artworkUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
+                put("artworkRemoteUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
                 put("duration", track.durationMs.coerceAtLeast(0L) / 1000.0)
             })
         }
@@ -1367,6 +1400,76 @@ class PlayerController(
             put("sourceId", expectedTrackId); put("tracks", tracks); put("index", index)
             put("skipped", entries.size - resolved.size); put("truncated", entries.size < originalIds.size)
         }.toString()
+    }
+
+    // Resolve new selections with the account already on this iPhone. This does
+    // not touch local playback or export credentials. A captured queue revision
+    // prevents a slow resolution from overwriting another controller's edits.
+    fun retryTVStream() {
+        val remote = TVRemoteSession.state.value
+        val track = remote.track ?: return
+        if (track.id > 0) sendTVTracks(listOf(track), "queue-refresh")
+        else TVRemoteSession.command("retry")
+    }
+
+    private fun sendTVTracks(source: List<Track>, operation: String, placement: String = "last", startIndex: Int = 0, startPositionMs: Long = 0): Boolean {
+        val remote = TVRemoteSession.state.value
+        if (!remote.active) return false
+        if (!remote.online) { TVRemoteSession.notice("Reconnect to your LG before changing the queue."); return true }
+        if (tvResolveJob?.isActive == true) { TVRemoteSession.notice("Tracks are still being prepared. Please wait."); return true }
+        if (operation != "load" && remote.queueRevision < 0) { TVRemoteSession.notice("Update Resona TV to use the shared queue."); return true }
+        if (source.isEmpty()) return true
+        val selectedIndex = startIndex.coerceIn(0, source.lastIndex)
+        val first = if (operation == "load") (selectedIndex - 10).coerceAtLeast(0) else 0
+        val entries = source.drop(first).take(100)
+        if (operation == "queue-add" && remote.slots.size + entries.size > 100) { TVRemoteSession.notice("The TV queue can hold up to 100 tracks."); return true }
+        TVRemoteSession.notice("Preparing tracks for LG…")
+        tvResolveJob = scope.launch {
+            try {
+                val workers = Semaphore(6)
+                val resolved = withTimeout(45_000L) { coroutineScope {
+                    entries.mapIndexed { index, item -> async {
+                        workers.withPermit {
+                            val resolved = withTimeoutOrNull(8_000L) {
+                                try {
+                                    val full = withContext(Dispatchers.IO) { trackRepository.getTrack(item.id) }
+                                    if (full.restrictionReason() != null) null
+                                    else withContext(Dispatchers.IO) { trackRepository.resolvePlayableStream(full) }?.let { full to it.url }
+                                } catch (cancelled: CancellationException) { throw cancelled }
+                                catch (_: Exception) { null }
+                            }
+                            resolved?.let { index to it }
+                        }
+                    } }.awaitAll().filterNotNull()
+                } }
+                check(TVRemoteSession.state.value.active) { "The TV session ended." }
+                val selected = if (operation == "load") resolved.indexOfFirst { it.first == selectedIndex - first } else 0
+                check(resolved.isNotEmpty() && selected >= 0) { "The selected tracks are unavailable for TV playback." }
+                val tracks = JSONArray()
+                resolved.forEach { (slot, pair) ->
+                    val (track, url) = pair
+                    tracks.put(JSONObject().apply {
+                        put("id", "phone-${track.id}-${currentTimeMillis()}-$slot"); put("sourceId", track.id.toString())
+                        put("url", url); put("title", track.title)
+                        put("artist", track.publisherMetadata?.artist?.trim()?.takeIf { it.isNotEmpty() }
+                            ?: track.metadataArtist?.trim()?.takeIf { it.isNotEmpty() } ?: track.user.username)
+                        put("artworkUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
+                        put("artworkRemoteUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
+                        put("waveformUrl", track.waveformUrl ?: ""); put("duration", track.durationMs.coerceAtLeast(0) / 1000.0)
+                    })
+                }
+                TVRemoteSession.send?.invoke(JSONObject().apply {
+                    put("type", operation); put("tracks", tracks)
+                    if (remote.queueRevision >= 0) put("queueRevision", remote.queueRevision)
+                    if (operation == "load") { put("index", selected); put("position", startPositionMs.coerceAtLeast(0) / 1000.0) }
+                    else {
+                        put("placement", placement); put("queueRevision", remote.queueRevision)
+                        if (operation == "queue-refresh") put("trackId", remote.slots.getOrNull(remote.index)?.key ?: "")
+                    }
+                }.toString())
+            } catch (_: Exception) { TVRemoteSession.notice("Tracks could not be sent. The current TV playback has been kept.") }
+        }
+        return true
     }
 
     private fun doPlay(track: Track, requestIndex: Int, requestId: Long, startPositionMs: Long = 0L) {
@@ -1420,20 +1523,24 @@ class PlayerController(
     }
 
     fun togglePlayPause() {
+        if (TVRemoteSession.command(if (TVRemoteSession.state.value.state == "playing") "pause" else "play")) return
         controller?.let { if (it.isPlaying) it.pause() else it.play() }
     }
 
     fun seekTo(positionMs: Long) {
+        if (TVRemoteSession.command("seek", positionMs)) return
         controller?.seekTo(positionMs)
     }
 
     fun beginScrub() {
+        if (TVRemoteSession.state.value.active) return
         isScrubbing = true
         wasPlayingBeforeScrub = controller?.isPlaying == true
         if (!wasPlayingBeforeScrub) controller?.play()
     }
 
     fun scrubTo(positionMs: Long) {
+        if (TVRemoteSession.state.value.active) return
         if (!isScrubbing) return
         pendingScrubJob?.cancel()
         val now = currentTimeMillis()
@@ -1451,6 +1558,7 @@ class PlayerController(
     }
 
     fun endScrub(positionMs: Long) {
+        if (TVRemoteSession.command("seek", positionMs)) return
         if (!isScrubbing) {
             controller?.seekTo(positionMs)
             return
@@ -1462,7 +1570,7 @@ class PlayerController(
         if (!wasPlayingBeforeScrub) controller?.pause()
     }
 
-    fun currentPosition(): Long = controller?.currentPosition ?: 0L
+    fun currentPosition(): Long = if (TVRemoteSession.state.value.active) TVRemoteSession.state.value.positionMs else controller?.currentPosition ?: 0L
 
     fun setLoop(startMs: Long, endMs: Long) {
         val duration = _state.value.durationMs

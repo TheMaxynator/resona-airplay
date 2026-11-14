@@ -176,6 +176,9 @@
   document.getElementById('previous').addEventListener('click', function () { command({ type: 'previous' }); });
   document.getElementById('next').addEventListener('click', function () { command({ type: 'next' }); });
   document.getElementById('layout').addEventListener('click', function () { var next = layouts[(layouts.indexOf(document.body.dataset.layout) + 1) % layouts.length]; if (preview) preferences({ layout: next, dim: .48, progress: true }); else command({ type: 'preferences', preferences: { layout: next } }); });
+  document.getElementById('reset-pairing').addEventListener('click', async function () {
+    try { await api('/api/pair/reset', {}); pairRequested = true; } catch (error) { message(error.message); }
+  });
   document.getElementById('pair').addEventListener('click', function () { pairRequested = !pairRequested; if (latest) showPairing(latest); });
   document.getElementById('progress-mode').addEventListener('click', function () {
     var mode = document.body.dataset.progressMode === 'always' ? 'auto' : 'always', modes = {};

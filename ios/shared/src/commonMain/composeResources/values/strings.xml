@@ -1003,4 +1003,13 @@
     <string name="settings_liquid_glass_desc">Translucent glass on the dock and player. When off, looks like the Android version</string>
     <string name="settings_dock_background">Background behind the dock</string>
     <string name="settings_dock_background_desc">Solid background behind the dock. When off, content shows through it</string>
+
+    <string name="tv_remote_playing">Playing on LG TV</string>
+    <string name="tv_remote_connecting">Connecting to LG TV</string>
+    <string name="tv_remote_close">Close player</string>
+    <string name="tv_remote_settings">TV connection settings</string>
+    <string name="tv_remote_return_phone">Listen on iPhone</string>
+    <string name="tv_remote_play">Play on TV</string>
+    <string name="tv_remote_pause">Pause TV</string>
+    <string name="tv_remote_retry">Retry stream</string>
 </resources>

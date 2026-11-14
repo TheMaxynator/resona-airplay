@@ -465,7 +465,14 @@ struct TVSettingsView: View {
         NavigationStack {
             Form {
                 Section("TV output") {
-                    Picker("Output", selection: $model.outputMode) {
+                    Picker("Output", selection: Binding(get: { model.outputMode }, set: { mode in
+                        if mode != .lg && LGConnectClient.shared.controlsTV {
+                            Task { @MainActor in
+                                await LGConnectClient.shared.returnToPhone()
+                                if !LGConnectClient.shared.controlsTV { model.outputMode = mode }
+                            }
+                        } else { model.outputMode = mode }
+                    })) {
                         ForEach(TVOutputMode.allCases) { Text($0.title).tag($0) }
                     }.pickerStyle(.segmented)
                     if model.outputMode == .audio {

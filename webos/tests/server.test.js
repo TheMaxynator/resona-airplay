@@ -115,7 +115,7 @@ test('a native queue starting at a middle entry supports next, previous and dupl
   await f.request('/api/command', { type: 'previous' }, token);
   assert.equal((await f.display()).track.id, 'slot-1');
 });
-test('persists only display preferences, without stream URLs or pairing credentials', async t => {
+test('persists display preferences separately from hashed trusted devices, without streams or raw tokens', async t => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resona-test-')); t.after(() => fs.rmSync(dataDir, { force: true, recursive: true }));
   const f = await fixture(t, { dataDir }), token = await f.pair();
   await f.request('/api/command', { type: 'load', tracks }, token);
@@ -123,7 +123,10 @@ test('persists only display preferences, without stream URLs or pairing credenti
   const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'preferences.json')));
   assert.deepEqual(saved, { layout: 'night', dim: 0.8, progress: false, waveform: false,
     progressModes: { cinema: 'always', gallery: 'always', ambient: 'always', night: 'always' } });
-  assert.deepEqual(fs.readdirSync(dataDir), ['preferences.json']);
+  assert.deepEqual(fs.readdirSync(dataDir), ['paired-devices.json', 'preferences.json']);
+  const devices = fs.readFileSync(path.join(dataDir, 'paired-devices.json'), 'utf8');
+  assert.ok(!devices.includes(token)); assert.ok(!devices.includes(tracks[0].url));
+  assert.equal(fs.statSync(path.join(dataDir, 'paired-devices.json')).mode & 511, 384);
   assert.equal((await f.request('/api/command', { type: 'preferences', preferences: { dim: 5 } }, token)).status, 400);
 });
 test('health supports the packaged bootstrap while API responses do not permit cross-origin control', async t => {
@@ -172,7 +175,7 @@ test('an app update replaces only its own helper on the requested port', { timeo
   const original = await start(target), unrelated = await start(other);
   const exited = new Promise(resolve => original.once('exit', resolve));
   await start(target, true); await exited;
-  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.1.3');
+  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.2.0');
   assert.equal((await fetch('http://127.0.0.1:' + other + '/health')).status, 200);
   assert.equal(unrelated.exitCode, null); assert.equal(unrelated.signalCode, null);
 });
@@ -218,4 +221,101 @@ test('waveform data is bounded, peak-preserving, and restricted to the public So
   for (const data of [{ samples: [], height: 140 }, { samples: [NaN], height: 1 }, { samples: [141], height: 140 }, { samples: [0], height: 0 }, { samples: new Array(20001).fill(0), height: 140 }]) assert.throws(() => peaks(data));
   assert.equal(allowed('https://wave.sndcdn.com/BD4HLDld5F83_m.json'), true);
   for (const value of ['http://wave.sndcdn.com/x.json', 'https://evil.example/x.json', 'https://wave.sndcdn.com.evil.example/x.json', 'file:///etc/passwd', 'https://user:pass@wave.sndcdn.com/x.json']) assert.equal(allowed(value), false);
+});
+
+test('shared queue edits preserve playing audio, identity and position across controllers', async t => {
+  const f = await fixture(t), first = await f.pair(), second = await f.pair();
+  const loaded = await f.request('/api/command', { type: 'load', tracks, position: 23 }, first);
+  let before = (await f.display()), revision = before.queueRevision;
+  let added = await f.request('/api/command', { type: 'queue-add', tracks: [Object.assign({}, tracks[0], { sourceId: '42' })], placement: 'next', queueRevision: revision }, second);
+  assert.equal(added.status, 200);
+  let state = (await f.request('/api/state', undefined, first)).data;
+  assert.equal(state.queue.length, 3); assert.equal(new Set(state.queue.map(x => x.id)).size, 3);
+  assert.equal(state.queue[1].sourceId, '42'); assert.equal(state.generation, loaded.data.generation);
+  assert.equal(state.track.id, 'first'); assert.equal(state.position, 23); assert.equal(state.desiredPlaying, true);
+  const ids = state.queue.map(x => x.id).reverse(); revision = state.queueRevision;
+  assert.equal((await f.request('/api/command', { type: 'queue-reorder', ids, queueRevision: revision }, first)).status, 200);
+  state = (await f.display()); assert.equal(state.track.id, 'first'); assert.equal(state.index, 2);
+  assert.equal(state.generation, before.generation); assert.equal(state.position, 23);
+  assert.equal((await f.request('/api/command', { type: 'queue-remove', trackId: ids[0], queueRevision: state.queueRevision }, second)).status, 200);
+  state = (await f.display()); assert.equal(state.track.id, 'first'); assert.equal(state.index, 1);
+  assert.equal(state.commands.filter(x => x.type === 'load').length, 1);
+  assert.equal((await f.request('/api/command', { type: 'queue-play', trackId: state.queue[0].id, queueRevision: state.queueRevision }, first)).status, 200);
+  state = (await f.display()); assert.notEqual(state.track.id, 'first'); assert.equal(state.position, 0);
+});
+
+test('stale and malformed shared queue mutations are atomic, including slow replacement loads', async t => {
+  const f = await fixture(t), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks }, token);
+  let initial = (await f.display());
+  for (const change of [
+    { type: 'queue-add', placement: 'next', tracks: [{ url: 'file:///etc/passwd' }] },
+    { type: 'queue-reorder', ids: ['first', 'first'] },
+    { type: 'queue-remove', trackId: 'missing' },
+    { type: 'queue-play', trackId: 'missing' }
+  ]) {
+    const reply = await f.request('/api/command', Object.assign({ queueRevision: initial.queueRevision }, change), token);
+    assert.ok(reply.status >= 400); assert.deepEqual((await f.display()).queue, initial.queue);
+    assert.equal(f.receiver.snapshot().generation, initial.generation);
+  }
+  await f.request('/api/command', { type: 'next' }, token);
+  for (const type of ['queue-add', 'queue-remove', 'queue-reorder', 'queue-play', 'load']) {
+    assert.equal((await f.request('/api/command', { type, queueRevision: initial.queueRevision, tracks, placement: 'last', trackId: 'first', ids: ['second', 'first'] }, token)).status, 409);
+  }
+  assert.equal(f.receiver.snapshot().track.id, 'second');
+  const full = Array.from({ length: 100 }, (_, i) => Object.assign({}, tracks[0], { id: 'slot-' + i }));
+  await f.request('/api/command', { type: 'load', tracks: full }, token);
+  assert.equal((await f.request('/api/command', { type: 'queue-add', tracks: [tracks[0]], placement: 'last', queueRevision: f.receiver.snapshot().queueRevision }, token)).status, 400);
+  assert.equal(f.receiver.snapshot().queue.length, 100);
+});
+
+test('removing current and final tracks has defined playback behavior and ignores old end events', async t => {
+  const f = await fixture(t), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks }, token);
+  const previous = f.receiver.snapshot();
+  await f.request('/api/command', { type: 'queue-remove', trackId: 'first', queueRevision: previous.queueRevision }, token);
+  assert.equal(f.receiver.snapshot().track.id, 'second'); assert.equal(f.receiver.snapshot().desiredPlaying, true);
+  assert.equal((await f.request('/api/display/report', { generation: previous.generation, trackId: 'first', state: 'ended' }, f.receiver.getDisplayToken())).data.ignored, true);
+  await f.request('/api/command', { type: 'queue-remove', trackId: 'second', queueRevision: f.receiver.snapshot().queueRevision }, token);
+  assert.equal(f.receiver.snapshot().track, null); assert.equal(f.receiver.snapshot().queue.length, 0);
+  await f.request('/api/command', { type: 'load', tracks, index: 1 }, token);
+  await f.request('/api/command', { type: 'queue-remove', trackId: 'second', queueRevision: f.receiver.snapshot().queueRevision }, token);
+  assert.equal(f.receiver.snapshot().track.id, 'first'); assert.equal(f.receiver.snapshot().desiredPlaying, false);
+});
+
+test('trusted devices survive receiver restart and remain individually revocable without storing tokens', async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resona-trust-')); t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const first = await fixture(t, { dataDir }), token = await first.pair();
+  await new Promise(resolve => { first.receiver.server.closeAllConnections(); first.receiver.server.close(resolve); });
+  const restarted = await fixture(t, { dataDir }); await restarted.display();
+  assert.equal((await restarted.request('/api/state', undefined, token)).status, 200);
+  assert.equal(restarted.receiver.snapshot().pairedDevices, 1);
+  const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'paired-devices.json'), 'utf8'));
+  assert.equal(saved.length, 1); assert.notEqual(saved[0].hash, token); assert.match(saved[0].hash, /^[a-f0-9]{64}$/);
+  const response = await fetch(restarted.base + '/api/session', { method: 'DELETE', headers: { Authorization: 'Bearer ' + token } });
+  assert.equal(response.status, 200);
+  const afterRevoke = await fixture(t, { dataDir });
+  assert.equal((await afterRevoke.request('/api/state', undefined, token)).status, 401);
+});
+
+test('compact native state retains source IDs and HTTP covers while omitting streams and inline cover payloads', async t => {
+  const f = await fixture(t), token = await f.pair();
+  await f.request('/api/command', { type: 'load', tracks: [Object.assign({}, tracks[0], { sourceId: '2095439361', artworkUrl: 'data:image/jpeg;base64,/9j/2Q==', artworkRemoteUrl: 'https://example.org/cover.jpg' })] }, token);
+  const value = (await f.request('/api/state?compact=1', undefined, token)).data;
+  assert.equal(value.track.sourceId, '2095439361'); assert.equal(value.track.artworkUrl, 'https://example.org/cover.jpg');
+  assert.equal(value.queue[0].sourceId, '2095439361'); assert.ok(!JSON.stringify(value).includes('base64'));
+  assert.ok(!JSON.stringify(value).includes(tracks[0].url)); assert.equal(value.capabilities.queueEditing, true);
+});
+
+test('refreshing a signed current stream preserves its queue slot and position while replacing only its URL', async t => {
+  const f = await fixture(t), token = await f.pair();
+  const original = Object.assign({}, tracks[0], { sourceId: '42' });
+  await f.request('/api/command', { type: 'load', tracks: [original, tracks[1]], position: 31 }, token);
+  const before = f.receiver.snapshot();
+  const refresh = { type: 'queue-refresh', trackId: 'first', queueRevision: before.queueRevision, tracks: [Object.assign({}, original, { id: 'new-temporary-id', url: 'https://example.org/refreshed.mp3' })] };
+  assert.equal((await f.request('/api/command', refresh, token)).status, 200);
+  const display = await f.display(); assert.equal(display.track.id, 'first'); assert.equal(display.position, 31);
+  assert.equal(display.track.url, 'https://example.org/refreshed.mp3'); assert.equal(display.queue[1].id, 'second');
+  assert.equal(display.generation, before.generation + 1);
+  assert.equal((await f.request('/api/command', refresh, token)).status, 409);
 });

@@ -3,7 +3,7 @@ name: AirPlay iOS
 on:
   push:
     branches: [main, airplay-tv]
-    paths: ["ios/**", "scripts/prepare_tv_test_host.py", ".github/workflows/airplay-ios.yml"]
+    paths: ["ios/**", "scripts/prepare_tv_test_host.py", "tests/tv-bridge/**", ".github/workflows/airplay-ios.yml"]
   workflow_dispatch: {}
 
 permissions:
@@ -29,6 +29,8 @@ jobs:
         with:
           path: ~/.konan
           key: airplay-konan-${{ runner.os }}-${{ hashFiles('ios/gradle/libs.versions.toml') }}
+      - name: Test the production Kotlin TV bridge
+        run: ./ios/gradlew -p tests/tv-bridge run --no-daemon --console=plain
       - name: Typecheck native display code
         run: |
           xcodebuild -version
@@ -59,12 +61,12 @@ jobs:
           mkdir -p build/ipa/Payload
           cp -R build/device/Build/Products/Debug-iphoneos/Resona.app build/ipa/Payload/
           cd build/ipa
-          zip -qry ../Resona-TV-2.0.4.ipa Payload
+          zip -qry ../Resona-TV-2.1.0.ipa Payload
       - name: Upload unsigned test IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Resona-TV-2.0.4-unsigned
-          path: ios/iosApp/build/Resona-TV-2.0.4.ipa
+          name: Resona-TV-2.1.0-unsigned
+          path: ios/iosApp/build/Resona-TV-2.1.0.ipa
           if-no-files-found: error
           retention-days: 30
       - name: Upload test results and logs

@@ -1,6 +1,6 @@
 # Resona TV for rooted LG webOS
 
-Version **0.1.3**, a hardware-test candidate for webOS 23. The television plays audio directly and draws the square cover over a blurred, dimmed version of the same image. It provides Cinema, Gallery, Ambient and Night layouts, progress, TV remote controls and a PIN-paired phone remote. A resolved queue of up to 100 tracks can advance on the TV without keeping the phone awake.
+Version **0.2.0**, a hardware-test candidate for webOS 23. The television plays audio directly and draws the square cover over a blurred, dimmed version of the same image. It provides Cinema, Gallery, Ambient and Night layouts, progress, TV remote controls and a PIN-paired phone remote. A resolved queue of up to 100 tracks can advance on the TV without keeping the phone awake.
 
 ## Gallery appearance
 
@@ -16,11 +16,11 @@ https://raw.githubusercontent.com/TheMaxynator/resona-airplay/main/repo.json
 
 It lists Resona TV with its version, root requirement, icon, release download and SHA-256 checksum. New versions are published only after the receiver, Node 12 and browser checks pass. Refresh Homebrew Channel's app list to discover updates. Published IPKs are kept immutable: increment `app/appinfo.json` for a new application version. The publisher updates the index using the already-published bytes on retries. The first release is labelled as a test/pre-release on GitHub.
 
-1. Use your existing rooted-TV connection in [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) to install `com.themaxynator.resonatv_0.1.3_all.ipk`.
+1. Use your existing rooted-TV connection in [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) to install `com.themaxynator.resonatv_0.2.0_all.ipk`.
 2. Ensure Homebrew Channel is installed and working as root. Launch **Resona TV** on the television. The app starts its bundled receiver through Homebrew Channel's documented `exec` method. No boot hook or firewall changes are installed.
 3. The TV shows a six-digit code and an address/QR code. Keep the TV app open. Your iPhone and TV need the same reachable home network. If no IP can be detected, look up the TV's IPv4 address in its network settings; use `http://TV-IP:42700/remote`.
 4. For an initial hardware check, open that address in Safari, enter the code, expand **Testgeluid of eigen audiolink** and select **Testgeluid afspelen**. This plays a bundled, quiet 20-second test tone and example cover.
-5. Install **Resona TV 2.0.4 build 21** on the iPhone using your usual signing method. Open its **TV** button, select **LG app**, enter the TV IPv4 address and code, then select **Send queue to LG** while an online track is loaded. Allow local-network access if iOS asks. Stop AirPlay/Screen Mirroring for this mode.
+5. Install **Resona TV 2.1.0 build 22** on the iPhone using your usual signing method. Open its **TV** button, select **LG app**, enter the TV IPv4 address and code, then select **Send iPhone queue to LG** while an online track is loaded. Allow local-network access if iOS asks. Stop AirPlay/Screen Mirroring for this mode.
 
 Covers now have a remote-URL fallback and a correctly scaled, size-bounded JPEG. Artwork arriving after handoff is sent separately, without restarting audio. Generation, queue-slot and revision guards prevent old artwork from replacing the next track. The TV button sits at the lower right above the actual player/dock height.
 
@@ -50,7 +50,7 @@ LG's documented Type 3 gallery policy is requested: it gradually dims and extend
 
 The bundled Node 12-compatible helper listens on TCP **42700**, without a computer or cloud relay. The display endpoint is restricted to loopback. Phone commands require a token obtained with the on-screen code; PIN attempts are limited. No endpoint accepts shell commands, file paths or arbitrary headers. Media is fetched directly by the TV's audio element, not proxied through a root file API.
 
-The prototype uses HTTP on the private home network; it does not provide TLS encryption. Do not expose its port to the Internet. Pairing sessions and stream URLs are memory-only. Only appearance preferences and a minimal receiver log are stored under `/var/lib/resona-tv`. The process exits approximately two minutes after its last display heartbeat and restarts when the TV app opens again. Close the TV app before replacing or removing its package. After updating, reopen it: the launcher checks the installed version and replaces only the same-owner Node process running its exact receiver script on the same port. You may need to enter the new pairing code.
+The prototype uses HTTP on the private home network; it does not provide TLS encryption. Do not expose its port to the Internet. Stream URLs remain memory-only. Appearance preferences, hashes of paired-device tokens and a minimal receiver log are stored under `/var/lib/resona-tv`. The process exits approximately two minutes after its last display heartbeat and restarts when the TV app opens again. Close the TV app before replacing or removing its package. After updating, reopen it: the launcher checks the installed version and replaces only the same-owner Node process running its exact receiver script on the same port. After upgrading from 0.1.x, pair once. In 0.2.0, trusted devices survive helper restarts; disconnect removes that phone, and the TV pairing screen can forget all phones.
 
 If startup fails, read `/var/lib/resona-tv/receiver.log` through your existing TV-management connection. The fixed bootstrap command is:
 
@@ -80,3 +80,11 @@ npm run package
 - [LG native audio playback](https://webostv.developer.lge.com/develop/guides/multi-sound-playback)
 - [LG screensaver policy](https://webostv.developer.lge.com/develop/guides/screensaver)
 - [Homebrew Channel's root execution interface](https://github.com/webosbrew/webos-homebrew-channel#lunaorgwebosbrewhbchannelserviceexec)
+
+## Shared session in 0.2.0 / iPhone 2.1.0
+
+The iPhone mini player and full player control the selected TV, and the ordinary queue sheet mirrors its live queue. Add next/last, reorder, remove and jump to a slot without resending everything. The web remote offers equivalent queue buttons. Queue revisions prevent lost concurrent edits. New track resolution requires the foreground iPhone and uses the account already there, without sending its credentials to the television. Initial handoff still prepares up to 100 online tracks for independent TV playback.
+
+The receiver remembers only hashes of paired-device tokens in `paired-devices.json` (mode 0600), never raw tokens, queue URLs or account credentials. The TV pairing screen has a Forget paired phones action; each phone can also disconnect itself. The iPhone retains the selected TV during a network interruption, uses backoff and refreshes on foreground. Listen on iPhone pauses the receiver before returning the current track and position. Retry stream refreshes the current SoundCloud link through the foreground iPhone, preserving its queue slot and position. It does not provide unattended background refresh.
+
+The standalone Kotlin bridge check is `./ios/gradlew -p tests/tv-bridge run`. CI also typechecks the Swift adapter, runs ten native tests, compiles the complete IPA, checks Node 12 and exercises two browser controllers editing one playing queue. Physical iPhone and G3 verification remains required.

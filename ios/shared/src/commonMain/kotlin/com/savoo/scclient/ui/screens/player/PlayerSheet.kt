@@ -442,7 +442,7 @@ fun PlayerSheet(
             pulse = rememberBeatPulse(
                 effects = viewModel.soundEffects,
                 enabled = viewModel.beatPulseEnabled.collectAsState().value,
-                isPlaying = state.isPlaying,
+                isPlaying = state.isPlaying && !state.remoteTV,
             ),
             glowColor = glowColor,
             seekBarStyle = viewModel.seekBarStyle.collectAsState().value,
@@ -555,7 +555,9 @@ private fun FullPlayerSheet(
         containerColor = if (isPixel) pixelPalette.background else classicPalette.bg,
         dragHandle = null,
     ) {
-        if (!isPixel) {
+        if (state.remoteTV) {
+            TVRemotePlayer(state, controller, onDismiss)
+        } else if (!isPixel) {
             ClassicPlayerContent(
                 controller = controller,
                 state = state,
@@ -862,7 +864,11 @@ private fun MiniPlayerRow(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    if (state.isRetryingNetwork) stringResource(Res.string.network_retrying) else track.user.username,
+                    when {
+                        state.remoteTV -> stringResource(if (state.remoteOnline) Res.string.tv_remote_playing else Res.string.tv_remote_connecting) + " · " + track.user.username
+                        state.isRetryingNetwork -> stringResource(Res.string.network_retrying)
+                        else -> track.user.username
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (state.isRetryingNetwork) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -910,7 +916,7 @@ private fun MiniPlayerRow(
                     modifier = Modifier.size(20.dp),
                 )
             }
-            IconButton(onClick = { haptics.like(); heartAnimating = true; onToggleFavorite() }, modifier = Modifier.size(48.dp)) {
+            IconButton(onClick = { haptics.like(); heartAnimating = true; onToggleFavorite() }, modifier = Modifier.size(48.dp), enabled = track.id > 0) {
                 Icon(
                     if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                     contentDescription = stringResource(Res.string.player_favorite),

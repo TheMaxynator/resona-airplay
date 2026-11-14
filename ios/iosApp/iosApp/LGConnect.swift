@@ -37,8 +37,9 @@ struct LGPreparedQueue: Decodable {
         let id: String; let url: String; let title: String; let artist: String
         let artworkUrl: String?; let duration: Double
         let waveformUrl: String?
+        let sourceId: String?
         var payload: [String: Any] {
-            ["id": id, "url": url, "title": title, "artist": artist,
+            ["id": id, "sourceId": sourceId ?? "", "url": url, "title": title, "artist": artist, "artworkRemoteUrl": artworkUrl ?? "",
              "artworkUrl": artworkUrl ?? "", "waveformUrl": waveformUrl ?? "", "duration": TVPlaybackModel.validTime(duration)]
         }
     }
@@ -94,9 +95,14 @@ private final class LGQueueRequest {
     }
 }
 
-struct LGPlaybackSnapshot: Decodable {
-    struct Track: Decodable { let id: String; let title: String; let artist: String }
-    struct Preferences: Decodable { let layout: String; let dim: Double; let progress: Bool }
+struct LGPlaybackSnapshot: Codable {
+    struct Track: Codable {
+        let id: String; let title: String; let artist: String
+        let sourceId: String?; let artworkUrl: String?; let artworkRemoteUrl: String?
+        let duration: Double?; let waveformUrl: String?
+    }
+    struct Preferences: Codable { let layout: String; let dim: Double; let progress: Bool }
+    struct Capabilities: Codable { let queueEditing: Bool?; let persistentPairing: Bool? }
     let generation: Int
     let receiverOnline: Bool
     let state: String
@@ -107,6 +113,8 @@ struct LGPlaybackSnapshot: Decodable {
     let preferences: Preferences
     let index: Int?
     let queue: [Track]?
+    let queueRevision: Int?
+    let capabilities: Capabilities?
 }
 
 enum LGConnectError: LocalizedError {
@@ -121,8 +129,16 @@ final class LGConnectClient: ObservableObject {
     @Published var code = ""
     @Published private(set) var paired = false
     @Published private(set) var busy = false
-    @Published private(set) var message = "Open Resona TV on your LG, then enter its address and pairing code."
-    @Published private(set) var snapshot: LGPlaybackSnapshot?
+    @Published private(set) var message = "Open Resona TV on your LG, then enter its address and pairing code." { didSet { publishRemoteState() } }
+    @Published private(set) var snapshot: LGPlaybackSnapshot? { didSet { publishRemoteState() } }
+    @Published private(set) var controlsTV = false { didSet {
+        UserDefaults.standard.set(controlsTV, forKey: "tv.lgControlsTV"); publishRemoteState()
+    } }
+    @Published private(set) var reachable = false { didSet { publishRemoteState() } }
+    private var commandObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
+    private var nextRefresh = Date.distantPast
+    private var refreshFailures = 0
     private let session: URLSession
     private var baseURL: URL?
     private var token = ""
@@ -142,7 +158,65 @@ final class LGConnectClient: ObservableObject {
         self.session = session
         self.prepareQueue = prepareQueue ?? { try await LGQueueRequest.prepare(sourceID: $0, streamURL: $1) }
     }
-    deinit { timer?.invalidate() }
+    deinit {
+        timer?.invalidate()
+        if let commandObserver { NotificationCenter.default.removeObserver(commandObserver) }
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+    }
+
+    private func publishRemoteState() {
+        var value: [String: Any] = ["active": controlsTV, "online": reachable && paired && snapshot?.receiverOnline == true, "message": message]
+        if let snapshot, let data = try? JSONEncoder().encode(snapshot),
+           let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            value.merge(state) { old, _ in old }
+            // Codable omits nil. Explicitly clear the shared player on stop.
+            if snapshot.track == nil { value["track"] = NSNull() }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: value), let json = String(data: data, encoding: .utf8) else { return }
+        NotificationCenter.default.post(name: Notification.Name("ResonaTVRemoteState"), object: nil, userInfo: ["json": json])
+    }
+
+    func useTVInPlayer() {
+        let player = TVPlaybackModel.shared.player
+        player?.pause(); castPlayer = player; castItem = player?.currentItem; isCasting = true
+        controlsTV = true
+        message = reachable ? "Playing on LG TV. Controls and queue now follow the television." : "Reconnecting to LG TV. Open Resona TV on the television."
+    }
+
+    func returnToPhone() async {
+        guard let track = snapshot?.track, let source = track.sourceId, Int64(source) != nil else {
+            message = "Open the original online track on your iPhone to play it locally."; return
+        }
+        do {
+            let _: CommandReply = try await request("/api/command", body: ["type": "pause"])
+            NotificationCenter.default.post(name: Notification.Name("ResonaTVReturnLocal"), object: nil,
+                userInfo: ["sourceId": source, "title": track.title, "artist": track.artist,
+                           "artworkUrl": track.artworkRemoteUrl ?? track.artworkUrl ?? "", "position": snapshot?.position ?? 0])
+            controlsTV = false; isCasting = false; rateObservation = nil
+            artworkObservation?.cancel(); artworkTask?.cancel()
+            message = "Playback returned to your iPhone."
+        } catch { message = "The TV could not be paused. Reconnect before returning playback to your iPhone." }
+    }
+
+    private func receiveRemoteCommand(_ json: String) async {
+        guard let data = json.data(using: .utf8), let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = body["type"] as? String else { return }
+        if type == "notice" { message = body["message"] as? String ?? ""; return }
+        if type == "return-local" { await returnToPhone(); return }
+        guard paired, controlsTV, !busy else { message = "Reconnect to your LG before using its controls."; return }
+        if type.hasPrefix("queue-") && snapshot?.capabilities?.queueEditing != true {
+            message = "Update Resona TV to use the shared queue."; return
+        }
+        do {
+            let _: CommandReply = try await request("/api/command", body: body)
+            if type == "queue-add" { message = "Added to the TV queue." }
+            else if type == "load" { message = "Playing on LG TV." }
+            await refresh(force: true)
+        } catch {
+            message = error.localizedDescription
+            await refresh(force: true)
+        }
+    }
 
     static func receiverURL(_ input: String) throws -> URL {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -167,19 +241,32 @@ final class LGConnectClient: ObservableObject {
     }
 
     func start() {
-        guard timer == nil else { return }
+        guard timer == nil else { publishRemoteState(); return }
+        commandObserver = NotificationCenter.default.addObserver(forName: Notification.Name("ResonaTVRemoteCommand"), object: nil, queue: .main) { [weak self] note in
+            guard let json = note.userInfo?["json"] as? String else { return }
+            Task { @MainActor in await self?.receiveRemoteCommand(json) }
+        }
+        foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.refresh(force: true) }
+        }
+        controlsTV = UserDefaults.standard.bool(forKey: "tv.lgControlsTV")
         if let url = try? Self.receiverURL(address) {
             baseURL = url; token = storedToken(url)
             paired = !token.isEmpty
         }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.refresh() }
+            Task { @MainActor in
+                guard UIApplication.shared.applicationState == .active else { return }
+                await self?.refresh()
+            }
         }
-        Task { await refresh() }
+        publishRemoteState()
+        Task { await refresh(force: true) }
     }
 
     private func request<T: Decodable>(_ route: String, body: [String: Any]? = nil, method: String? = nil, authenticated: Bool = true) async throws -> T {
         guard let baseURL, let url = URL(string: route, relativeTo: baseURL) else { throw LGConnectError.message("Enter the TV address first.") }
+        let expectedURL = baseURL, expectedToken = token
         var request = URLRequest(url: url, timeoutInterval: 6)
         request.httpMethod = method ?? (body == nil ? "GET" : "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -188,7 +275,7 @@ final class LGConnectClient: ObservableObject {
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw LGConnectError.message("The TV did not return a valid response.") }
         guard (200...299).contains(response.statusCode) else {
-            if authenticated && response.statusCode == 401 { paired = false; token = ""; removeToken(baseURL) }
+            if authenticated && response.statusCode == 401 && self.baseURL == expectedURL && token == expectedToken { paired = false; token = ""; reachable = false; removeToken(baseURL) }
             let failure = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             throw LGConnectError.message(failure?["error"] as? String ?? "The TV could not complete the request.")
         }
@@ -210,24 +297,32 @@ final class LGConnectClient: ObservableObject {
             UserDefaults.standard.set(address, forKey: "tv.lgAddress")
             if let baseURL { storeToken(token, baseURL) }
             message = "Connected to your LG TV."
-            let remote: LGPlaybackSnapshot = try await request("/api/state"); snapshot = remote
+            let remote: LGPlaybackSnapshot = try await request("/api/state?compact=1"); reachable = true; snapshot = remote
         } catch { message = error.localizedDescription }
     }
 
-    func refresh() async {
-        guard paired, !busy, !refreshing else { return }; refreshing = true; defer { refreshing = false }
+    func refresh(force: Bool = false) async {
+        guard paired, !busy, !refreshing, force || Date() >= nextRefresh else { return }
+        refreshing = true; defer { refreshing = false }
         let expectedToken = token
         do {
-            let remote: LGPlaybackSnapshot = try await request("/api/state")
+            let remote: LGPlaybackSnapshot = try await request("/api/state?compact=1")
             guard expectedToken == token else { return }
-            snapshot = remote
+            refreshFailures = 0; nextRefresh = .distantPast
+            reachable = true; snapshot = remote
             if isCasting, let player = castPlayer, player.rate > 0 {
-                isCasting = false
+                isCasting = false; controlsTV = false
                 let _: CommandReply = try await request("/api/command", body: ["type": "pause"])
                 message = "Playback returned to your iPhone."
             } else if !remote.receiverOnline { message = "Open Resona TV on the television." }
             else if !remote.error.isEmpty { message = remote.error }
-        } catch { message = error.localizedDescription }
+            else if message.hasPrefix("Reconnecting") { message = "Reconnected to LG TV." }
+        } catch {
+            guard expectedToken == token || !paired else { return }
+            reachable = false; refreshFailures += 1
+            nextRefresh = Date().addingTimeInterval(min(15, pow(2, Double(min(refreshFailures, 4)))))
+            message = paired ? "Reconnecting to LG TV. Playback continues there; open Resona TV if needed." : "Pair this iPhone again using the code on your LG."
+        }
     }
 
     func command(_ type: String, position: Double? = nil, layout: String? = nil) async {
@@ -237,13 +332,13 @@ final class LGConnectClient: ObservableObject {
             if let position { body["position"] = max(0, position.isFinite ? position : 0) }
             if let layout { body["preferences"] = ["layout": layout] }
             let _: CommandReply = try await request("/api/command", body: body)
-            await refresh()
+            await refresh(force: true)
         } catch { message = error.localizedDescription }
     }
 
     private func waitFor(_ generation: Int, playing: Bool) async throws {
         for _ in 0..<35 {
-            let remote: LGPlaybackSnapshot = try await request("/api/state")
+            let remote: LGPlaybackSnapshot = try await request("/api/state?compact=1")
             snapshot = remote
             guard remote.generation == generation else { throw LGConnectError.message("The selected TV track changed. Send the track again.") }
             if remote.state == "error" { throw LGConnectError.message(remote.error.isEmpty ? "The TV cannot play this stream." : remote.error) }
@@ -288,7 +383,7 @@ final class LGConnectClient: ObservableObject {
             let _: CommandReply = try await request("/api/command", body: ["type": "play"])
             try await waitFor(loaded.generation, playing: true)
             guard player.currentItem === item && player.rate == 0 else { throw LGConnectError.message("Playback changed on your iPhone. Send the track again.") }
-            castPlayer = player; castItem = item; isCasting = true
+            castPlayer = player; castItem = item; isCasting = true; reachable = true; controlsTV = true
             artworkObservation?.cancel(); artworkTask?.cancel(); artworkRevision = 0
             sentArtwork = encoded == nil ? nil : art
             artworkObservation = model.$artwork.sink { [weak self, weak model, weak item] image in
@@ -333,7 +428,7 @@ final class LGConnectClient: ObservableObject {
         guard !busy else { return }
         let _: AcceptedReply? = try? await request("/api/session", method: "DELETE")
         if let baseURL { removeToken(baseURL) }
-        token = ""; paired = false; snapshot = nil; isCasting = false; rateObservation = nil
+        token = ""; paired = false; controlsTV = false; reachable = false; snapshot = nil; isCasting = false; rateObservation = nil
         artworkObservation?.cancel(); artworkObservation = nil; artworkTask?.cancel(); artworkTask = nil; sentArtwork = nil
         message = "Disconnected. Music already playing on the TV continues there."
     }
@@ -370,9 +465,12 @@ struct LGConnectSettings: View {
                 TextField("Six-digit TV pairing code", text: $client.code).keyboardType(.numberPad)
                 Button("Connect to LG") { Task { await client.pair() } }.disabled(client.busy)
             } else {
+                Button("Reconnect now") { Task { await client.refresh(force: true) } }
                 if let track = client.snapshot?.track { LabeledContent("Playing on LG", value: track.title) }
-                Button("Send queue to LG") { Task { await client.sendCurrentTrack(model) } }
-                    .disabled(client.busy || !model.hasTrack)
+                if !client.controlsTV && client.snapshot?.track != nil { Button("Use LG in the player") { client.useTVInPlayer() } }
+                if client.controlsTV { Button("Listen on iPhone") { Task { await client.returnToPhone() } } }
+                Button("Send iPhone queue to LG") { Task { await client.sendCurrentTrack(model) } }
+                    .disabled(client.busy || !model.hasTrack || (client.controlsTV && client.snapshot?.track != nil))
                 HStack {
                     Button("Previous") { Task { await client.command("previous") } }
                     Spacer()
@@ -401,7 +499,7 @@ struct LGConnectSettings: View {
             }
             if client.busy { ProgressView() }
             Text(client.message).font(.footnote).foregroundColor(.secondary)
-            Text("Sends a snapshot of your Resona queue, up to 100 online tracks. Next, Previous and automatic advancement work on the TV. Send again after changing the iPhone queue. Keep Resona open while preparing it.")
+            Text("Sends a snapshot of your Resona queue, up to 100 online tracks. Next, Previous and automatic advancement work on the TV. While LG is selected, the iPhone player and queue control the TV. New tracks can be added or played directly from Resona. Keep Resona open while preparing online streams.")
                 .font(.footnote).foregroundColor(.secondary)
         }
         .onAppear { client.start() }

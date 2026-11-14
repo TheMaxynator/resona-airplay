@@ -5,7 +5,7 @@
   var busy = false;
   async function health() {
     var abort = new AbortController(); var timer = setTimeout(function () { abort.abort(); }, 1200);
-    try { var result = await fetch(base + '/health', { signal: abort.signal }); var data = await result.json(); return result.ok && data.name === 'Resona TV' && data.protocol === 1 && data.version === '0.1.3'; }
+    try { var result = await fetch(base + '/health', { signal: abort.signal }); var data = await result.json(); return result.ok && data.name === 'Resona TV' && data.protocol === 1 && data.version === '0.2.0'; }
     catch (_) { return false; } finally { clearTimeout(timer); }
   }
   function startService() {

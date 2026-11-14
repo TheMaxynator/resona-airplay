@@ -104,18 +104,21 @@ def main():
             gh("release", "upload", tag, *metadata, "--repo", repository, "--clobber")
         else:
             notes = output / "release-notes.md"
-            notes.write_text(f"Resona TV {version}: progress controls, readable artists and efficient track waveforms.\n\n"
-                             "Choose Always visible or Auto fade separately for each of the four layouts, directly on the TV or in the phone web remote. "
-                             "Gallery places a subtle 90%-width progress line near the bottom edge. Stylized Unicode names are normalized to readable text.\n\n"
-                             "Optional SoundCloud track waveforms use precomputed peaks, rasterized to two small cached canvases. "
-                             "Only composited transforms change during playback. This is a position-synchronized track waveform, not a live FFT or spectrum. "
-                             "The native audio player and hardware decoder remain unchanged. Unavailable waveform data falls back to the line.\n\n"
-                             "The companion iPhone 2.0.4 (build 21) reads publisher artist metadata and forwards waveform URLs. "
-                             "For the reported Subcultuur track the published artist is Eva Vrijdag, while SUBCULTUUR is the uploader. "
-                             "The TV progress settings and Unicode fix also work with the previous sender.\n\n"
-                             "Receiver tests, Node 12 compatibility and browser regressions pass before publication. "
-                             "CI frame-cadence measurements are not a physical LG G3 FPS guarantee. "
-                             "Install through the existing Homebrew repository and reopen the app after updating.\n")
+            notes.write_text(f"Resona TV {version}: shared queues and remembered connections.\n\n"
+                             "The companion iPhone 2.1.0 (build 22) lets the existing mini player, full player and queue control the active LG session. "
+                             "TV and phone keep separate playback state: a connection interruption never silently switches the controls back to local audio. "
+                             "Use Listen on iPhone to pause the receiver before returning the current track and position to the phone.\n\n"
+                             "Add next/last, reorder, remove or jump to a queue item from Resona or the web remote. "
+                             "Queue revisions reject conflicting edits from other controllers. Editing upcoming tracks preserves the current decoder, position and track identity. "
+                             "A Retry stream action can resolve the current SoundCloud link again without replacing the other queue entries.\n\n"
+                             "Paired devices are remembered across receiver restarts using token hashes; raw tokens and stream URLs are not stored. "
+                             "Forget individual phones from their remote or use Forget paired phones on the TV pairing screen. "
+                             "Reconnect uses bounded backoff and retries immediately when the iPhone returns to the foreground.\n\n"
+                             "Gallery, the independent progress modes, artwork and the optional precomputed waveform remain available. "
+                             "Receiver tests, actual Node 12 compatibility and real-audio browser regressions pass before publication. "
+                             "The browser tests exercise two controllers editing one queue without reloading playback. "
+                             "The complete iPhone build and physical LG/iPhone performance are verified separately. "
+                             "Install from the existing Homebrew repository, reopen the app and pair once after upgrading from 0.1.x.\n")
             gh("release", "create", tag, str(ipk), *metadata, "--repo", repository,
                "--target", os.environ["GITHUB_SHA"], "--title", "Resona TV (webOS) " + version,
                "--notes-file", str(notes), "--prerelease")
