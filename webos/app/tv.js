@@ -7,14 +7,27 @@
   var requestedPosition = 0, wantPlay = false, reporting = false, lastState = 'idle';
   var messages = document.getElementById('message'), pairing = document.getElementById('pairing');
   var toolbarTimer, pairRequested = false, errorTimer;
-  var layouts = ['cinema', 'gallery', 'ambient', 'night'];
+  var layouts = ['cinema', 'gallery', 'ambient', 'night', 'studio'];
   var appearance = null, appearanceKey = '', knownTrack = '', lastRatio = -1;
   var waveform = new ResonaWaveform(document.getElementById('waveform-track'));
+  var panel = document.getElementById('session-panel'), sessionTimer, markerKey = '', receiverFailures = 0;
+  var session = new ResonaSession(panel, command, true);
+  var markers = document.getElementById('chapter-markers'); document.getElementById('progress-area').appendChild(markers);
+  function hideSession() {
+    panel.hidden = true; document.body.classList.remove('session-open'); clearTimeout(sessionTimer);
+    controls(); document.getElementById('session-open').focus();
+  }
+  panel.onSessionClose = hideSession;
+  function touchSession() { clearTimeout(sessionTimer); sessionTimer = setTimeout(hideSession, 30000); }
+  function renderSession() { if (latest) session.render(latest, current, Number.isFinite(audio.currentTime) ? audio.currentTime : 0); }
   function text(id, value) { var element = document.getElementById(id); if (element.textContent !== value) element.textContent = value; }
   function time(value) { value = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0; return (value >= 3600 ? Math.floor(value / 3600) + ':' + String(Math.floor(value / 60) % 60).padStart(2, '0') : Math.floor(value / 60)) + ':' + String(value % 60).padStart(2, '0'); }
   async function api(route, data) {
-    var response = await fetch(route, { method: data === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) });
-    var result = await response.json(); if (!response.ok) throw new Error(result.error || 'Verbinding met de ontvanger verbroken.'); return result;
+    var controller = new AbortController(), timeout = setTimeout(function () { controller.abort(); }, 6000);
+    try {
+      var response = await fetch(route, { method: data === undefined ? 'GET' : 'POST', signal: controller.signal, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) });
+      var result = await response.json(); if (!response.ok) throw new Error(result.error || 'Verbinding met de ontvanger verbroken.'); return result;
+    } finally { clearTimeout(timeout); }
   }
   function message(value) { clearTimeout(errorTimer); messages.hidden = !value; messages.textContent = value || ''; }
   function controls() { document.body.classList.add('controls-visible'); progress(); clearTimeout(toolbarTimer); toolbarTimer = setTimeout(function () { if (document.getElementById('toolbar').contains(document.activeElement)) document.activeElement.blur(); document.body.classList.remove('controls-visible'); }, 5000); }
@@ -87,10 +100,12 @@
     text('progress-mode', 'Balk: ' + (!value.progress ? 'uit' : mode === 'auto' ? 'auto' : 'altijd'));
     text('waveform-toggle', 'Golfvorm: ' + (value.waveform ? 'aan' : 'uit'));
     waveform.configure(current, value.progress && value.waveform);
+    chapterMarkers();
     text('layout', value.layout.charAt(0).toUpperCase() + value.layout.slice(1));
     progress();
   }
   function progress() {
+    sessionProgress();
     if (document.hidden || document.getElementById('progress-area').hidden ||
         (document.body.dataset.progressMode === 'auto' && !document.body.classList.contains('controls-visible'))) return;
     var duration = Number.isFinite(audio.duration) ? audio.duration : (current && current.duration) || 0;
@@ -99,6 +114,30 @@
     var ratio = duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 0;
     if (ratio !== lastRatio) { document.getElementById('progress-fill').style.transform = 'scaleX(' + ratio + ')'; lastRatio = ratio; }
     waveform.progress(ratio);
+  }
+  function chapterMarkers() {
+    var duration = Number.isFinite(audio.duration) ? audio.duration : current && current.duration || 0;
+    var key = generation + '|' + duration;
+    if (key === markerKey) return; markerKey = key; markers.replaceChildren();
+    if (!current || !duration) return;
+    (current.chapters || []).forEach(function (chapter) {
+      if (chapter.position >= duration) return;
+      var mark = document.createElement('i'); mark.style.left = (chapter.position / duration * 100) + '%'; markers.appendChild(mark);
+    });
+  }
+  function sessionProgress() {
+    if (document.hidden) return;
+    var elapsed = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    var total = Number.isFinite(audio.duration) ? audio.duration : current && current.duration || 0;
+    var chapters = current && current.chapters || [], chapter = ResonaChapterAt(chapters, elapsed);
+    document.getElementById('chapter-caption').hidden = chapter < 0;
+    text('chapter-name', chapter >= 0 ? chapters[chapter].title : '');
+    var next = latest && latest.queue[latest.index + 1], remaining = total - elapsed;
+    var endTimer = latest && latest.session && latest.session.sleepTimer && latest.session.sleepTimer.mode === 'end-track';
+    var show = appearance && appearance.upNext !== false && next && !endTimer && !audio.paused && remaining > 0 && remaining <= Math.min(20, total * .15) && pairing.hidden;
+    document.getElementById('up-next').hidden = !show;
+    if (show) { text('up-next-title', next.title); text('up-next-artist', next.artist); }
+    renderSession();
   }
   async function report(state, error) {
     if (preview || !current || reporting) return;
@@ -141,6 +180,8 @@
   async function poll() {
     try {
       var snapshot = await api('/api/display?after=' + sequence + '&known=' + encodeURIComponent(knownTrack)); latest = snapshot;
+      if (receiverFailures && messages.dataset.network === '1') { message(''); messages.dataset.network = ''; }
+      receiverFailures = 0;
       showPairing(snapshot);
       if (snapshot.generation !== generation) {
         if (snapshot.track) load({ generation: snapshot.generation, track: snapshot.track, position: snapshot.position, autoplay: snapshot.desiredPlaying });
@@ -154,12 +195,14 @@
         }
       }
       preferences(snapshot.preferences);
+      sessionProgress();
       knownTrack = snapshot.trackVersion || '';
-    } catch (_) { message('De ontvanger is niet bereikbaar. Open Resona TV opnieuw.'); }
-    setTimeout(poll, 550);
+    } catch (_) { receiverFailures++; message('De ontvanger is niet bereikbaar. Open Resona TV opnieuw.'); messages.dataset.network = '1'; }
+    setTimeout(poll, receiverFailures ? Math.min(4000, receiverFailures * 1000) : 550);
   }
   audio.addEventListener('canplay', function () {
     if (!current) return; ready = true; loading = false;
+    chapterMarkers();
     if (requestedPosition > 0) { try { audio.currentTime = requestedPosition; } catch (_) {} requestedPosition = 0; }
     report('ready'); if (wantPlay) play();
   });
@@ -175,6 +218,10 @@
   document.getElementById('toggle').addEventListener('click', function () { if (audio.paused) { play(); command({ type: 'play' }); } else command({ type: 'pause' }); });
   document.getElementById('previous').addEventListener('click', function () { command({ type: 'previous' }); });
   document.getElementById('next').addEventListener('click', function () { command({ type: 'next' }); });
+  document.getElementById('session-open').addEventListener('click', function () {
+    panel.hidden = false; document.body.classList.add('session-open'); renderSession(); touchSession(); panel.querySelector('.session-close').focus();
+  });
+  panel.addEventListener('pointerdown', touchSession);
   document.getElementById('layout').addEventListener('click', function () { var next = layouts[(layouts.indexOf(document.body.dataset.layout) + 1) % layouts.length]; if (preview) preferences({ layout: next, dim: .48, progress: true }); else command({ type: 'preferences', preferences: { layout: next } }); });
   document.getElementById('reset-pairing').addEventListener('click', async function () {
     try { await api('/api/pair/reset', {}); pairRequested = true; } catch (error) { message(error.message); }
@@ -190,9 +237,20 @@
     if (preview) preferences(Object.assign({}, appearance, { waveform: !appearance.waveform }));
     else command({ type: 'preferences', preferences: { waveform: !appearance.waveform } });
   });
-  document.addEventListener('mousemove', controls);
+  document.addEventListener('mousemove', function () { controls(); if (!panel.hidden) touchSession(); });
   document.addEventListener('keydown', function (event) {
     controls();
+    if (!panel.hidden) {
+      touchSession();
+      if (event.key === 'Escape' || event.keyCode === 461) { event.preventDefault(); hideSession(); return; }
+      var available = Array.from(panel.querySelectorAll('button:not(:disabled)')).filter(function (button) { return button.offsetParent !== null; });
+      var selected = available.indexOf(document.activeElement), direction = event.key === 'ArrowDown' || event.key === 'ArrowRight' || (event.key === 'Tab' && !event.shiftKey) ? 1 : -1;
+      if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Tab'].indexOf(event.key) >= 0 && available.length) {
+        event.preventDefault(); var focus = available[(selected + direction + available.length) % available.length]; focus.focus(); focus.scrollIntoView({ block: 'nearest' });
+      }
+      return;
+    }
+    if (event.key === 'ArrowUp' && document.activeElement === document.body) { event.preventDefault(); document.getElementById('session-open').click(); return; }
     if (event.key === 'Escape' || event.keyCode === 461) { if (!pairing.hidden) { pairRequested = false; pairing.hidden = true; event.preventDefault(); } else if (window.webOS) window.webOS.platformBack(); }
     var buttons = Array.from(document.querySelectorAll('#toolbar button'));
     var active = buttons.indexOf(document.activeElement);

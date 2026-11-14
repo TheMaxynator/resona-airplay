@@ -20,6 +20,7 @@ data class Track(
     @SerialName("waveform_url") val waveformUrl: String? = null,
     @SerialName("publisher_metadata") val publisherMetadata: PublisherMetadata? = null,
     @SerialName("metadata_artist") val metadataArtist: String? = null,
+    @SerialName("description") val description: String? = null,
 )
 
 @Serializable

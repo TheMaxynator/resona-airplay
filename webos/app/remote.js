@@ -3,6 +3,14 @@
   var token = localStorage.getItem('resona-tv-token') || '';
   var snapshot = null, interacting = false, updating = false, retryAt = 0, failures = 0, queueKey = '';
   var pairSection = document.getElementById('pair-section'), pairedSection = document.getElementById('paired-section');
+  var sessionElement = document.createElement('section'); sessionElement.id = 'remote-session'; sessionElement.className = 'session-tools';
+  document.querySelector('.queue-section').insertAdjacentElement('beforebegin', sessionElement);
+  var session = new ResonaSession(sessionElement, command, false);
+  var studioOption = document.createElement('option'); studioOption.value = 'studio'; studioOption.textContent = 'Studio'; document.getElementById('remote-layout').appendChild(studioOption);
+  var upNextLabel = document.createElement('label'); upNextLabel.className = 'check';
+  var upNext = document.createElement('input'); upNext.type = 'checkbox'; upNext.id = 'show-up-next';
+  upNextLabel.appendChild(upNext); upNextLabel.appendChild(document.createTextNode('Hierna-melding')); document.querySelector('.appearance').appendChild(upNextLabel);
+  upNext.addEventListener('change', function () { command({ type: 'preferences', preferences: { upNext: upNext.checked } }); });
   function text(id, value) { var element = document.getElementById(id); if (element.textContent !== value) element.textContent = value; }
   function message(value) { var node = document.getElementById('remote-message'); node.hidden = !value; node.textContent = value || ''; }
   function pairing() { pairSection.hidden = !!token; pairedSection.hidden = !token; text('connection', token ? 'Verbinden…' : 'Niet gekoppeld'); }
@@ -58,7 +66,7 @@
     if (!token || updating || (!force && Date.now() < retryAt)) return;
     updating = true;
     try {
-      snapshot = await api('/api/state'); failures = 0; retryAt = 0;
+      snapshot = await api('/api/state?compact=1'); failures = 0; retryAt = 0;
       var track = snapshot.track, cover = document.getElementById('remote-cover');
       text('connection', snapshot.receiverOnline ? 'Verbonden met LG' : 'Tv-app gesloten'); document.getElementById('connection').classList.toggle('online', snapshot.receiverOnline);
       text('remote-title', track ? track.title : 'Kies je muziek.'); text('remote-artist', track ? track.artist : 'Stuur een nummer vanuit Resona of begin met de test hieronder.');
@@ -76,6 +84,8 @@
       document.getElementById('remote-layout').value = snapshot.preferences.layout; document.getElementById('show-progress').checked = snapshot.preferences.progress;
       document.getElementById('remote-progress-mode').value = snapshot.preferences.progressModes[snapshot.preferences.layout];
       document.getElementById('show-waveform').checked = snapshot.preferences.waveform;
+      upNext.checked = snapshot.preferences.upNext !== false;
+      session.render(snapshot, track, snapshot.position);
       text('waveform-hint', track && track.waveformAvailable ? 'Vooraf berekende golfvorm die de afspeelpositie volgt.' : 'Geen golfvormgegevens voor dit nummer; de voortgangslijn blijft beschikbaar.');
       renderQueue();
       document.querySelectorAll('#queue-list button').forEach(function (button) { button.disabled = !snapshot.receiverOnline || button.dataset.unavailable === '1'; });

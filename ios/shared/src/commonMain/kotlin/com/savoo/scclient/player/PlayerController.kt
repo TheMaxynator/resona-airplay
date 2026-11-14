@@ -1339,6 +1339,13 @@ class PlayerController(
     // Resolve an immutable snapshot for the independent LG receiver. This path
     // deliberately bypasses iPhone-only cached files and never mutates playback,
     // queue order, duplicate entries, or unavailable-track database flags.
+    private fun tvChapterText(track: Track, limit: Int): String {
+        if (limit <= 0) return ""
+        val stamp = Regex("""\b\d{1,3}:\d{2}(?::\d{2})?\b""")
+        return track.description.orEmpty().lineSequence().filter { stamp.containsMatchIn(it) }
+            .take(100).map { it.trim().take(220) }.joinToString("\n").take(limit)
+    }
+
     suspend fun prepareTVQueue(expectedTrackId: String, currentURL: String): String = withTimeout(50_000L) {
         val selected = queue.getOrNull(queueIndex) ?: error("Choose a track before sending the queue.")
         check(selected.track.id.toString() == expectedTrackId) { "The iPhone track changed. Send the queue again." }
@@ -1363,7 +1370,7 @@ class PlayerController(
                         val result = withTimeoutOrNull(8_000L) {
                             try {
                                 val track = if (entry.track.media != null &&
-                                    (!entry.track.publisherMetadata?.artist.isNullOrBlank() || !entry.track.metadataArtist.isNullOrBlank())) entry.track
+                                    (!entry.track.publisherMetadata?.artist.isNullOrBlank() || !entry.track.metadataArtist.isNullOrBlank()) && entry.track.description != null) entry.track
                                     else withContext(Dispatchers.IO) { trackRepository.getTrack(entry.track.id) }
                                 if (track.restrictionReason() != null) null
                                 else withContext(Dispatchers.IO) { trackRepository.resolvePlayableStream(track) }?.let { track to it.url }
@@ -1381,6 +1388,8 @@ class PlayerController(
         val index = resolved.indexOfFirst { it.first.id == selected.id }
         check(index >= 0) { "The selected track could not be sent." }
         val tracks = JSONArray()
+        val currentChapterText = tvChapterText(resolved[index].second.first, 12_000)
+        var chapterBudget = 24_000 - currentChapterText.length
         resolved.forEach { (entry, item) ->
             val (track, url) = item
             check(url.startsWith("https://") || url.startsWith("http://")) { "The TV needs online stream links." }
@@ -1390,6 +1399,9 @@ class PlayerController(
                 put("artist", track.publisherMetadata?.artist?.trim()?.takeIf { it.isNotEmpty() }
                     ?: track.metadataArtist?.trim()?.takeIf { it.isNotEmpty() } ?: track.user.username)
                 put("waveformUrl", track.waveformUrl ?: "")
+                val chapterText = if (entry.id == selected.id) currentChapterText else tvChapterText(track, minOf(1_000, chapterBudget))
+                if (entry.id != selected.id) chapterBudget -= chapterText.length
+                put("chapterText", chapterText)
                 put("url", url)
                 put("artworkUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
                 put("artworkRemoteUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
@@ -1446,6 +1458,8 @@ class PlayerController(
                 val selected = if (operation == "load") resolved.indexOfFirst { it.first == selectedIndex - first } else 0
                 check(resolved.isNotEmpty() && selected >= 0) { "The selected tracks are unavailable for TV playback." }
                 val tracks = JSONArray()
+                val currentChapterText = tvChapterText(resolved[selected].second.first, 12_000)
+                var chapterBudget = 24_000 - currentChapterText.length
                 resolved.forEach { (slot, pair) ->
                     val (track, url) = pair
                     tracks.put(JSONObject().apply {
@@ -1456,6 +1470,9 @@ class PlayerController(
                         put("artworkUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
                         put("artworkRemoteUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
                         put("waveformUrl", track.waveformUrl ?: ""); put("duration", track.durationMs.coerceAtLeast(0) / 1000.0)
+                        val chapterText = if (slot == resolved[selected].first) currentChapterText else tvChapterText(track, minOf(1_000, chapterBudget))
+                        if (slot != resolved[selected].first) chapterBudget -= chapterText.length
+                        put("chapterText", chapterText)
                     })
                 }
                 TVRemoteSession.send?.invoke(JSONObject().apply {
