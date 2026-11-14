@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { makeReceiver } = require('../app/receiver-server');
 
 async function fixture(t, extra) {
@@ -72,6 +73,47 @@ test('clears stale artwork and commands follow load, pause, seek, and stop', asy
   await f.request('/api/command', { type: 'stop' }, token);
   assert.equal((await f.display()).track, null);
 });
+test('late artwork updates the current track without reloading or seeking audio', async t => {
+  const f = await fixture(t), token = await f.pair();
+  const load = await f.request('/api/command', { type: 'load', tracks, autoplay: false, position: 19 }, token);
+  const generation = load.data.generation;
+  const cover = 'data:image/jpeg;base64,/9j/2Q==';
+  const before = await f.display();
+  const update = await f.request('/api/command', { type: 'artwork', generation, trackId: 'first', artworkRevision: 2, artworkUrl: cover }, token);
+  assert.equal(update.status, 200);
+  const after = await f.display();
+  assert.equal(after.generation, generation); assert.equal(after.position, 19);
+  assert.equal(after.desiredPlaying, false); assert.equal(after.track.artworkUrl, cover);
+  assert.deepEqual(after.queue, before.queue);
+  assert.equal(after.commands.at(-1).type, 'artwork');
+  assert.equal((await f.request('/api/command', { type: 'artwork', generation, trackId: 'first', artworkRevision: 1, artworkUrl: 'https://example.org/stale.jpg' }, token)).data.ignored, true);
+  assert.equal((await f.display()).track.artworkUrl, cover);
+  await f.request('/api/command', { type: 'next' }, token);
+  assert.equal((await f.request('/api/command', { type: 'artwork', generation, trackId: 'first', artworkRevision: 3, artworkUrl: cover }, token)).data.ignored, true);
+  assert.equal((await f.display()).track.id, 'second'); assert.equal((await f.display()).track.artworkUrl, '');
+});
+test('cover updates require pairing and reject unsafe URLs and oversized data', async t => {
+  const f = await fixture(t), token = await f.pair();
+  const load = await f.request('/api/command', { type: 'load', tracks }, token);
+  const command = { type: 'artwork', generation: load.data.generation, trackId: 'first', artworkRevision: 1 };
+  assert.equal((await f.request('/api/command', Object.assign({}, command, { artworkUrl: 'https://example.org/cover.jpg' }))).status, 401);
+  for (const artworkUrl of ['javascript:alert(1)', 'file:///etc/passwd', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/jpeg;base64,' + 'A'.repeat(220000)]) {
+    assert.equal((await f.request('/api/command', Object.assign({}, command, { artworkUrl }), token)).status, 400);
+    assert.equal((await f.display()).track.artworkUrl, '');
+  }
+});
+test('a native queue starting at a middle entry supports next, previous and duplicate songs', async t => {
+  const f = await fixture(t), token = await f.pair();
+  const queue = [Object.assign({}, tracks[0], { id: 'slot-1' }), Object.assign({}, tracks[0], { id: 'slot-2' }), Object.assign({}, tracks[1], { id: 'slot-3' })];
+  await f.request('/api/command', { type: 'load', tracks: queue, index: 1, autoplay: false }, token);
+  assert.equal((await f.display()).index, 1);
+  await f.request('/api/command', { type: 'next' }, token);
+  assert.equal((await f.display()).track.id, 'slot-3');
+  await f.request('/api/command', { type: 'previous' }, token);
+  assert.equal((await f.display()).track.id, 'slot-2');
+  await f.request('/api/command', { type: 'previous' }, token);
+  assert.equal((await f.display()).track.id, 'slot-1');
+});
 test('persists only display preferences, without stream URLs or pairing credentials', async t => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resona-test-')); t.after(() => fs.rmSync(dataDir, { force: true, recursive: true }));
   const f = await fixture(t, { dataDir }), token = await f.pair();
@@ -109,4 +151,26 @@ test('stops an inactive display receiver even when a phone keeps its HTTP connec
   now += 121000;
   await closed;
   assert.equal(f.receiver.server.listening, false);
+});
+test('an app update replaces only its own helper on the requested port', { timeout: 15000 }, async t => {
+  async function port() {
+    const probe = require('node:net').createServer(); await new Promise(r => probe.listen(0, '127.0.0.1', r));
+    const value = probe.address().port; await new Promise(r => probe.close(r)); return value;
+  }
+  async function start(number, replace) {
+    const child = spawn(process.execPath, [path.resolve(__dirname, '../app/receiver-server.js'), '--host', '127.0.0.1', '--port', String(number)].concat(replace ? ['--replace'] : []), { stdio: ['ignore', 'pipe', 'pipe'] });
+    t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill(); });
+    await new Promise((resolve, reject) => {
+      child.stdout.once('data', resolve); child.once('error', reject);
+      child.once('exit', code => reject(new Error('Receiver exited before startup: ' + code)));
+    });
+    return child;
+  }
+  const target = await port(), other = await port();
+  const original = await start(target), unrelated = await start(other);
+  const exited = new Promise(resolve => original.once('exit', resolve));
+  await start(target, true); await exited;
+  assert.equal((await (await fetch('http://127.0.0.1:' + target + '/health')).json()).version, '0.1.1');
+  assert.equal((await fetch('http://127.0.0.1:' + other + '/health')).status, 200);
+  assert.equal(unrelated.exitCode, null); assert.equal(unrelated.signalCode, null);
 });
