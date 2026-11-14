@@ -1,0 +1,80 @@
+name: AirPlay iOS
+
+on:
+  push:
+    branches: [main, airplay-tv]
+    paths: ["ios/**", ".github/workflows/airplay-ios.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: airplay-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: Build and test iOS artwork display
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: airplay-konan-${{ runner.os }}-${{ hashFiles('ios/gradle/libs.versions.toml') }}
+      - name: Typecheck native display code
+        run: |
+          xcodebuild -version
+          xcrun swiftc -typecheck -target arm64-apple-ios16.0 \
+            -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
+            ios/iosApp/iosApp/TVNowPlaying.swift
+      - name: Build unsigned IPA
+        working-directory: ios/iosApp
+        run: |
+          set -o pipefail
+          xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/device \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build \
+            | tee "$RUNNER_TEMP/airplay-build.log"
+          mkdir -p build/ipa/Payload
+          cp -R build/device/Build/Products/Release-iphoneos/Resona.app build/ipa/Payload/
+          cd build/ipa
+          zip -qry ../Resona-TV-2.0.1.ipa Payload
+      - name: Upload unsigned test IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Resona-TV-2.0.1-unsigned
+          path: ios/iosApp/build/Resona-TV-2.0.1.ipa
+          if-no-files-found: error
+          retention-days: 30
+      - name: Run simulator tests and render the four layouts
+        working-directory: ios/iosApp
+        run: |
+          set -o pipefail
+          DEVICE_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
+          xcrun simctl boot "$DEVICE_ID" || true
+          xcrun simctl bootstatus "$DEVICE_ID" -b
+          xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Debug \
+            -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath build/simulator \
+            -resultBundlePath build/TVDisplayTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO test | tee "$RUNNER_TEMP/airplay-tests.log"
+          xcrun simctl launch "$DEVICE_ID" com.themaxynator.resona.airplay --tv-preview
+          xcrun simctl io "$DEVICE_ID" screenshot build/phone-preview.png
+      - name: Upload test results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirPlay-test-results
+          path: |
+            ios/iosApp/build/TVDisplayTests.xcresult
+            ios/iosApp/build/phone-preview.png
+            ${{ runner.temp }}/airplay-build.log
+            ${{ runner.temp }}/airplay-tests.log
+          retention-days: 14
