@@ -13,22 +13,22 @@
     {
       "id": "com.themaxynator.resonatv",
       "title": "Resona TV",
-      "iconUri": "https://github.com/TheMaxynator/resona-airplay/releases/download/webos-v0.1.0/icon.png",
-      "manifestUrl": "https://github.com/TheMaxynator/resona-airplay/releases/download/webos-v0.1.0/manifest.json",
+      "iconUri": "https://github.com/TheMaxynator/resona-airplay/releases/download/webos-v0.1.1/icon.png",
+      "manifestUrl": "https://github.com/TheMaxynator/resona-airplay/releases/download/webos-v0.1.1/manifest.json",
       "manifest": {
         "id": "com.themaxynator.resonatv",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "type": "web",
         "title": "Resona TV",
         "appDescription": "Album artwork, a faded cover background and direct music playback. Early test build for rooted webOS 23 TVs.",
-        "iconUri": "https://github.com/TheMaxynator/resona-airplay/releases/download/webos-v0.1.0/icon.png",
+        "iconUri": "https://github.com/TheMaxynator/resona-airplay/releases/download/webos-v0.1.1/icon.png",
         "sourceUrl": "https://github.com/TheMaxynator/resona-airplay",
         "rootRequired": true,
-        "ipkUrl": "https://github.com/TheMaxynator/resona-airplay/releases/download/webos-v0.1.0/com.themaxynator.resonatv_0.1.0_all.ipk",
+        "ipkUrl": "https://github.com/TheMaxynator/resona-airplay/releases/download/webos-v0.1.1/com.themaxynator.resonatv_0.1.1_all.ipk",
         "ipkHash": {
-          "sha256": "c75840cae2eae1acc413ecbc78c7bbf89e9fee8b0ef1fba6800b480b37cdc4b7"
+          "sha256": "44d9083d1cd118796441f86159d9e8c1bb25ac851e6a8265e6bd1965c966ccdc"
         },
-        "ipkSize": 199136
+        "ipkSize": 199880
       },
       "shortDescription": "Music with a square cover and a faded full-screen background.",
       "pool": "main"
