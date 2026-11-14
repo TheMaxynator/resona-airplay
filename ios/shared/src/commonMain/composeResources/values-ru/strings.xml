@@ -1029,4 +1029,13 @@
     <string name="settings_liquid_glass_desc">Полупрозрачное стекло на доке и в плеере. Если выключить, будет как на Android</string>
     <string name="settings_dock_background">Фон под доком</string>
     <string name="settings_dock_background_desc">Сплошной фон за доком. Если выключить, контент будет виден сквозь него</string>
+
+    <string name="tv_remote_playing">Воспроизведение на LG TV</string>
+    <string name="tv_remote_connecting">Подключение к LG TV</string>
+    <string name="tv_remote_close">Закрыть проигрыватель</string>
+    <string name="tv_remote_settings">Настройки подключения к телевизору</string>
+    <string name="tv_remote_return_phone">Слушать на iPhone</string>
+    <string name="tv_remote_play">Воспроизвести на телевизоре</string>
+    <string name="tv_remote_pause">Приостановить воспроизведение на телевизоре</string>
+    <string name="tv_remote_retry">Повторить загрузку потока</string>
 </resources>
