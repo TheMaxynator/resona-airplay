@@ -38,9 +38,10 @@ struct LGPreparedQueue: Decodable {
         let artworkUrl: String?; let duration: Double
         let waveformUrl: String?
         let sourceId: String?
+        let chapterText: String?
         var payload: [String: Any] {
             ["id": id, "sourceId": sourceId ?? "", "url": url, "title": title, "artist": artist, "artworkRemoteUrl": artworkUrl ?? "",
-             "artworkUrl": artworkUrl ?? "", "waveformUrl": waveformUrl ?? "", "duration": TVPlaybackModel.validTime(duration)]
+             "artworkUrl": artworkUrl ?? "", "waveformUrl": waveformUrl ?? "", "chapterText": String((chapterText ?? "").prefix(16000)), "duration": TVPlaybackModel.validTime(duration)]
         }
     }
     let sourceId: String
@@ -96,13 +97,18 @@ private final class LGQueueRequest {
 }
 
 struct LGPlaybackSnapshot: Codable {
+    struct Chapter: Codable { let position: Double; let title: String }
+    struct Bookmark: Codable, Identifiable { let id: String; let position: Double; let label: String }
+    struct SleepTimer: Codable { let mode: String; let deadline: Double?; let trackId: String? }
+    struct SessionTools: Codable { let resumePosition: Double; let bookmarks: [Bookmark]; let sleepTimer: SleepTimer? }
     struct Track: Codable {
         let id: String; let title: String; let artist: String
         let sourceId: String?; let artworkUrl: String?; let artworkRemoteUrl: String?
         let duration: Double?; let waveformUrl: String?
+        let chapters: [Chapter]?
     }
     struct Preferences: Codable { let layout: String; let dim: Double; let progress: Bool }
-    struct Capabilities: Codable { let queueEditing: Bool?; let persistentPairing: Bool? }
+    struct Capabilities: Codable { let queueEditing: Bool?; let persistentPairing: Bool?; let sessionTools: Bool? }
     let generation: Int
     let receiverOnline: Bool
     let state: String
@@ -115,6 +121,7 @@ struct LGPlaybackSnapshot: Codable {
     let queue: [Track]?
     let queueRevision: Int?
     let capabilities: Capabilities?
+    let session: SessionTools?
 }
 
 enum LGConnectError: LocalizedError {
@@ -325,15 +332,21 @@ final class LGConnectClient: ObservableObject {
         }
     }
 
-    func command(_ type: String, position: Double? = nil, layout: String? = nil) async {
+    func command(_ type: String, position: Double? = nil, layout: String? = nil, values: [String: Any] = [:]) async {
         guard paired, !busy else { return }
         do {
-            var body: [String: Any] = ["type": type]
+            var body = values; body["type"] = type
             if let position { body["position"] = max(0, position.isFinite ? position : 0) }
             if let layout { body["preferences"] = ["layout": layout] }
             let _: CommandReply = try await request("/api/command", body: body)
             await refresh(force: true)
         } catch { message = error.localizedDescription }
+    }
+
+    func sessionCommand(_ type: String, values: [String: Any] = [:]) async {
+        guard let remote = snapshot, remote.capabilities?.sessionTools == true, let track = remote.track else { return }
+        var body = values; body["generation"] = remote.generation; body["trackId"] = track.id
+        await command(type, values: body)
     }
 
     private func waitFor(_ generation: Int, playing: Bool) async throws {
@@ -493,7 +506,13 @@ struct LGConnectSettings: View {
                         .font(.footnote).foregroundColor(.secondary).monospacedDigit()
                     Picker("LG layout", selection: Binding(get: { remote.preferences.layout }, set: { layout in
                         Task { await client.command("preferences", layout: layout) }
-                    })) { ForEach(TVLayout.allCases) { Text($0.title).tag($0.rawValue) } }
+                    })) {
+                        ForEach(TVLayout.allCases) { Text($0.title).tag($0.rawValue) }
+                        if remote.capabilities?.sessionTools == true { Text("Studio").tag("studio") }
+                    }
+                }
+                if let remote = client.snapshot, remote.capabilities?.sessionTools == true {
+                    DisclosureGroup("Session & DJ sets") { LGSessionToolsView(client: client, remote: remote) }
                 }
                 Button("Disconnect iPhone") { Task { await client.disconnect() } }.disabled(client.busy)
             }
@@ -504,5 +523,61 @@ struct LGConnectSettings: View {
         }
         .onAppear { client.start() }
         .onReceive(client.$snapshot) { remote in if !seeking { position = remote?.position ?? 0 } }
+    }
+}
+
+private struct LGSessionToolsView: View {
+    @ObservedObject var client: LGConnectClient
+    let remote: LGPlaybackSnapshot
+    private var chapters: [LGPlaybackSnapshot.Chapter] { remote.track?.chapters ?? [] }
+    private var chapterIndex: Int { chapters.lastIndex(where: { $0.position <= remote.position }) ?? -1 }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !chapters.isEmpty {
+                if chapterIndex >= 0 { Text(chapters[chapterIndex].title).font(.subheadline).foregroundColor(.secondary) }
+                Menu("Chapters (\(chapters.count))") {
+                    ForEach(chapters.indices, id: \.self) { index in
+                        Button("\(TVPlaybackModel.timeLabel(chapters[index].position)) · \(chapters[index].title)") {
+                            Task { await client.sessionCommand("chapter", values: ["index": index]) }
+                        }
+                    }
+                }
+                HStack {
+                    Button("Previous chapter") { Task { await client.sessionCommand("chapter", values: ["index": max(0, chapterIndex - 1)]) } }.disabled(chapterIndex <= 0)
+                    Spacer()
+                    Button("Next chapter") { Task { await client.sessionCommand("chapter", values: ["index": chapterIndex + 1]) } }.disabled(chapterIndex + 1 >= chapters.count)
+                }.buttonStyle(.borderless)
+            } else { Text("Chapters appear when a track description contains at least two labelled timestamps.").font(.footnote).foregroundColor(.secondary) }
+            if let resume = remote.session?.resumePosition, resume > 0 {
+                Button("Resume at \(TVPlaybackModel.timeLabel(resume))") { Task { await client.sessionCommand("resume") } }
+            }
+            Button("Bookmark this moment") { Task { await client.sessionCommand("bookmark-add") } }
+            ForEach(remote.session?.bookmarks ?? []) { bookmark in
+                HStack {
+                    Button(TVPlaybackModel.timeLabel(bookmark.position) + (bookmark.label.isEmpty ? "" : " · " + bookmark.label)) {
+                        Task { await client.sessionCommand("bookmark-play", values: ["id": bookmark.id]) }
+                    }
+                    Spacer()
+                    Button { Task { await client.sessionCommand("bookmark-remove", values: ["id": bookmark.id]) } } label: { Image(systemName: "trash") }
+                        .accessibilityLabel("Remove bookmark at \(TVPlaybackModel.timeLabel(bookmark.position))")
+                }.buttonStyle(.borderless)
+            }
+            Menu("Appearance preset") {
+                Button("Gallery") { Task { await client.command("preset", values: ["name": "gallery"]) } }
+                Button("DJ set") { Task { await client.command("preset", values: ["name": "studio"]) } }
+                Button("Night") { Task { await client.command("preset", values: ["name": "night"]) } }
+            }
+            Menu("Sleep timer") {
+                Button("Off") { Task { await client.command("sleep", values: ["mode": "off"]) } }
+                ForEach([15, 30, 60, 90], id: \.self) { minutes in
+                    Button("\(minutes) minutes") { Task { await client.command("sleep", values: ["mode": "minutes", "minutes": minutes]) } }
+                }
+                Button("At the end of this track") { Task { await client.command("sleep", values: ["mode": "end-track"]) } }
+            }
+            if let timer = remote.session?.sleepTimer {
+                Text(timer.mode == "end-track" ? "Audio pauses after this track." : "Audio pauses in \(max(0, Int(ceil(((timer.deadline ?? 0) / 1000 - Date().timeIntervalSince1970) / 60)))) min.")
+                    .font(.footnote).foregroundColor(.secondary)
+            }
+        }.disabled(client.busy || !client.reachable || remote.track == nil).padding(.vertical, 8)
     }
 }
