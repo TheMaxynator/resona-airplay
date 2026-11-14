@@ -6,7 +6,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const LAYOUTS = ['cinema', 'gallery', 'ambient', 'night'];
 const DEFAULTS = { layout: 'cinema', dim: 0.48, progress: true };
 function fail(message, status) { const error = new Error(message); error.status = status || 400; throw error; }
