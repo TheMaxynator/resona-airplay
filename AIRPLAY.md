@@ -46,7 +46,9 @@ Sources: [LG web app platform](https://webostv.developer.lge.com/develop/specifi
 
 ## Verification checklist
 
-Automated build and simulator results are recorded by the AirPlay iOS workflow. Native code typechecking and all four native simulator tests passed in [run #2](https://github.com/TheMaxynator/resona-airplay/actions/runs/43535713886), source `83ad80e`: iPhone 16 Pro simulator, iOS 18.5, Xcode 16.4. The full Kotlin/Compose device build was still running when these notes were updated. The simulator tests use the exact production TV source in an isolated native host; they do not claim to exercise the Kotlin notification sender or iOS 27 scene registration on physical hardware. No physical LG TV result is recorded yet.
+Automated build and simulator results are recorded by the AirPlay iOS workflow. The complete Kotlin/Compose physical-device build, native code typechecking and all four native simulator tests passed in [run #2](https://github.com/TheMaxynator/resona-airplay/actions/runs/43535713886), source `83ad80e`: iPhone 16 Pro simulator, iOS 18.5, Xcode 16.4. The four 1280×720 native layout attachments were extracted and visually inspected. The simulator tests use the exact production TV source in an isolated native host; they do not claim to exercise the Kotlin notification sender or iOS 27 scene registration on physical hardware. No physical LG TV result is recorded yet.
+
+The downloaded unsigned debug IPA has version 2.0.1, build 18, bundle ID `com.themaxynator.resona.airplay`, arm64 physical-iOS executable, minimum iOS 16.0 and size 34,177,151 bytes. ZIP CRC checks, background-audio support and the external noninteractive scene declaration passed inspection. SHA-256: `b5ca9263779386eaab4ecfa86a3939e2abc16146048132dafbc3d22825a020c8`. This is a device test candidate, not a hardware-verified or optimized release.
 
 For the hardware test, record the iPhone installation method (direct sideload or LiveContainer), LG model and webOS version. Use the same Wi-Fi network.
 
