@@ -5,11 +5,15 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { parseChapters, listeningHistory } = require('./session');
 
-const VERSION = '0.2.0';
-const LAYOUTS = ['cinema', 'gallery', 'ambient', 'night'];
-const DEFAULTS = { layout: 'cinema', dim: 0.48, progress: true, waveform: false };
-function progressModes() { return { cinema: 'always', gallery: 'always', ambient: 'always', night: 'always' }; }
+const VERSION = '0.3.0';
+const LAYOUTS = ['cinema', 'gallery', 'ambient', 'night', 'studio'];
+const DEFAULTS = { layout: 'gallery', dim: 0.48, progress: true, waveform: false, upNext: true };
+const PRESETS = { gallery: { layout: 'gallery', dim: .35, waveform: false, mode: 'always' },
+  studio: { layout: 'studio', dim: .55, waveform: true, mode: 'always' },
+  night: { layout: 'night', dim: .82, waveform: false, mode: 'auto' } };
+function progressModes() { return { cinema: 'always', gallery: 'always', ambient: 'always', night: 'always', studio: 'always' }; }
 function modePatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       Object.keys(value).some(key => LAYOUTS.indexOf(key) < 0 || ['auto', 'always'].indexOf(value[key]) < 0)) fail('Ongeldige balkinstelling.');
@@ -39,6 +43,7 @@ function track(value, index) {
     artworkRemoteUrl: value.artworkRemoteUrl ? url(value.artworkRemoteUrl, false) : '',
     title: displayText(value.title, 'Onbekend nummer'),
     artist: displayText(value.artist), waveformUrl: waveformLink(value.waveformUrl),
+    chapters: parseChapters(value.chapterText, value.duration),
     url: url(value.url, false), artworkUrl: value.artworkUrl ? url(value.artworkUrl, true) : '',
     duration: finite(value.duration, 0, 604800) ? value.duration : 0
   };
@@ -70,6 +75,31 @@ function makeReceiver(options) {
   const startedAt = clock();
   let lastDisplay = 0;
   const dataDir = options.dataDir;
+  const history = listeningHistory(dataDir, clock);
+  let resumePosition = 0, sleepTimer = null, sleepTimeout, sleepStoppedGeneration = -1;
+  function clearSleep() { clearTimeout(sleepTimeout); sleepTimer = null; }
+  function checkSleep() {
+    if (sleepTimer && sleepTimer.mode === 'minutes' && clock() >= sleepTimer.deadline) {
+      clearSleep(); desiredPlaying = false; sleepStoppedGeneration = generation; enqueue('pause');
+    }
+  }
+  function seekTo(target) {
+    position = duration > 0 ? Math.min(duration, target) : target;
+    enqueue('seek', { position });
+  }
+  function applyPreferences(patch) {
+    if (patch.layout !== undefined && LAYOUTS.indexOf(patch.layout) < 0) fail('Onbekend ontwerp.');
+    if (patch.dim !== undefined && !finite(patch.dim, 0.15, 0.9)) fail('Ongeldige helderheid.');
+    ['progress', 'waveform', 'upNext'].forEach(key => { if (patch[key] !== undefined && typeof patch[key] !== 'boolean') fail('Ongeldige weergave-instelling.'); });
+    if (patch.progressModes !== undefined) modePatch(patch.progressModes);
+    ['layout', 'dim', 'progress', 'waveform', 'upNext'].forEach(key => { if (patch[key] !== undefined) preferences[key] = patch[key]; });
+    if (patch.progressModes) Object.assign(preferences.progressModes, patch.progressModes);
+    if (dataDir) {
+      fs.mkdirSync(dataDir, { recursive: true, mode: 448 });
+      fs.writeFileSync(path.join(dataDir, 'preferences.json'), JSON.stringify(preferences), { mode: 384 });
+    }
+    enqueue('preferences', { preferences: appearance() });
+  }
   function sessionKey(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
   function saveSessions() {
     if (!dataDir) return;
@@ -91,6 +121,7 @@ function makeReceiver(options) {
       if (finite(saved.dim, 0.15, 0.9)) preferences.dim = saved.dim;
       if (typeof saved.progress === 'boolean') preferences.progress = saved.progress;
       if (typeof saved.waveform === 'boolean') preferences.waveform = saved.waveform;
+      if (typeof saved.upNext === 'boolean') preferences.upNext = saved.upNext;
       if (saved.progressModes) Object.assign(preferences.progressModes, modePatch(saved.progressModes));
     } catch (_) {}
   }
@@ -99,11 +130,13 @@ function makeReceiver(options) {
   function online() { return lastDisplay > 0 && clock() - lastDisplay < 15000; }
   function current() { return queue[index] || null; }
   function snapshot(includeURLs) {
+    checkSleep();
     const item = current();
     return { protocol: 1, version: VERSION, revision, generation, sequence, queueRevision, receiverOnline: online(),
-      capabilities: { queueEditing: true, persistentPairing: true },
+      capabilities: { queueEditing: true, persistentPairing: true, sessionTools: true },
+      session: { resumePosition, bookmarks: item && history.get(item) ? history.get(item).bookmarks : [], sleepTimer },
       trackVersion: generation + ':' + artworkRevision,
-      track: item ? (includeURLs ? item : { id: item.id, sourceId: item.sourceId, title: item.title, artist: item.artist, artworkRemoteUrl: publicArtwork(item), artworkUrl: item.artworkUrl, waveformAvailable: !!item.waveformUrl, duration: item.duration }) : null,
+      track: item ? (includeURLs ? item : { id: item.id, sourceId: item.sourceId, title: item.title, artist: item.artist, artworkRemoteUrl: publicArtwork(item), artworkUrl: item.artworkUrl, waveformAvailable: !!item.waveformUrl, chapters: item.chapters, duration: item.duration }) : null,
       queue: queue.map((t, i) => includeURLs ? { id: t.id, title: t.title, artist: t.artist, current: i === index } :
         { id: t.id, sourceId: t.sourceId, title: t.title, artist: t.artist, artworkUrl: publicArtwork(t), waveformUrl: t.waveformUrl, duration: t.duration, current: i === index }),
       index, state, position, duration: duration || (item && item.duration) || 0, desiredPlaying,
@@ -117,11 +150,17 @@ function makeReceiver(options) {
     changed();
   }
   function loadAt(next, start, play) {
+    if (current() && position >= 5) history.remember(current(), position, duration, true);
+    if (sleepTimer && sleepTimer.mode === 'end-track' && queue[next].id !== sleepTimer.trackId) clearSleep();
     index = next; generation++; queueRevision++; position = start || 0; duration = current().duration;
+    sleepStoppedGeneration = -1;
+    const saved = history.get(current());
+    resumePosition = saved && saved.position >= 5 && (!duration || saved.position < duration - 5) ? saved.position : 0;
     state = 'loading'; error = ''; desiredPlaying = play; artworkRevision = 0;
     enqueue('load', { track: current(), position, autoplay: play });
   }
   function command(value) {
+    checkSleep();
     if (!value || typeof value !== 'object') fail('Ongeldige opdracht.');
     if (value.type === 'load') {
       if (value.queueRevision !== undefined && value.queueRevision !== queueRevision) fail('De wachtrij is gewijzigd. Kies het nummer opnieuw.', 409);
@@ -131,7 +170,8 @@ function makeReceiver(options) {
       if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= nextQueue.length) fail('Ongeldige wachtrijpositie.');
       const start = value.position === undefined ? 0 : value.position;
       if (!finite(start, 0, 604800)) fail('Ongeldige afspeelpositie.');
-      queue = nextQueue; loadAt(nextIndex, start, value.autoplay !== false);
+      if (current() && position >= 5) history.remember(current(), position, duration, true);
+      queue = nextQueue; index = -1; loadAt(nextIndex, start, value.autoplay !== false);
     } else if (['queue-add', 'queue-reorder', 'queue-remove', 'queue-play', 'queue-refresh'].indexOf(value.type) >= 0) {
       if (!Number.isSafeInteger(value.queueRevision) || value.queueRevision !== queueRevision) fail('De wachtrij is gewijzigd. Bekijk de bijgewerkte lijst en probeer opnieuw.', 409);
       if (value.type === 'queue-refresh') {
@@ -161,12 +201,15 @@ function makeReceiver(options) {
         if (value.type === 'queue-play') loadAt(target, 0, true);
         else {
           const wasCurrent = target === index, shouldPlay = desiredPlaying;
+          if (wasCurrent && position >= 5) history.remember(current(), position, duration, true);
           queue.splice(target, 1);
           if (!queue.length) {
+            clearSleep(); resumePosition = 0;
             index = -1; position = 0; duration = 0; state = 'idle'; error = ''; desiredPlaying = false;
             generation++; queueRevision++; enqueue('stop');
           } else if (wasCurrent) {
             // Removing the final playing item prepares the preceding item paused.
+            index = -1;
             loadAt(Math.min(target, queue.length - 1), 0, target < queue.length && shouldPlay);
           } else {
             if (target < index) index--;
@@ -184,22 +227,45 @@ function makeReceiver(options) {
       current().artworkUrl = artworkUrl; artworkRevision = value.artworkRevision;
       enqueue('artwork', { trackId: current().id, artworkUrl });
     } else if (value.type === 'preferences') {
-      const patch = value.preferences || {};
-      if (patch.layout !== undefined && LAYOUTS.indexOf(patch.layout) < 0) fail('Onbekend ontwerp.');
-      if (patch.dim !== undefined && !finite(patch.dim, 0.15, 0.9)) fail('Ongeldige helderheid.');
-      if (patch.progress !== undefined && typeof patch.progress !== 'boolean') fail('Ongeldige voortgangsinstelling.');
-      if (patch.waveform !== undefined && typeof patch.waveform !== 'boolean') fail('Ongeldige golfvorminstelling.');
-      if (patch.progressModes !== undefined) modePatch(patch.progressModes);
-      ['layout', 'dim', 'progress', 'waveform'].forEach(k => { if (patch[k] !== undefined) preferences[k] = patch[k]; });
-      if (patch.progressModes) Object.assign(preferences.progressModes, patch.progressModes);
-      if (dataDir) {
-        fs.mkdirSync(dataDir, { recursive: true, mode: 448 });
-        fs.writeFileSync(path.join(dataDir, 'preferences.json'), JSON.stringify(preferences), { mode: 384 });
-      }
-      enqueue('preferences', { preferences: appearance() });
+      applyPreferences(value.preferences || {});
+    } else if (value.type === 'preset') {
+      const preset = PRESETS[value.name]; if (!Object.prototype.hasOwnProperty.call(PRESETS, value.name)) fail('Onbekende preset.');
+      const modes = {}; modes[preset.layout] = preset.mode;
+      applyPreferences({ layout: preset.layout, dim: preset.dim, progress: true, waveform: preset.waveform, progressModes: modes });
+    } else if (value.type === 'sleep') {
+      if (['off', 'minutes', 'end-track'].indexOf(value.mode) < 0) fail('Onbekende slaaptimer.');
+      if (value.mode === 'minutes' && (!Number.isInteger(value.minutes) || !finite(value.minutes, 1, 180))) fail('Kies 1 tot 180 minuten.');
+      if (value.mode !== 'off' && !current()) fail('Kies eerst een nummer.');
+      clearSleep();
+      if (value.mode === 'minutes') {
+        sleepTimer = { mode: 'minutes', deadline: clock() + value.minutes * 60000 };
+        sleepTimeout = setTimeout(checkSleep, value.minutes * 60000); sleepTimeout.unref();
+      } else if (value.mode === 'end-track') sleepTimer = { mode: 'end-track', trackId: current().id };
+      changed();
     } else {
       if (!current()) fail('Kies eerst een nummer.');
+      if (['chapter', 'bookmark-add', 'bookmark-remove', 'bookmark-play', 'resume'].indexOf(value.type) >= 0) {
+        if (value.generation !== generation || value.trackId !== current().id) fail('Het nummer is gewijzigd. Open de sessie opnieuw.', 409);
+        if (value.type === 'chapter') {
+          if (!Number.isInteger(value.index) || !current().chapters[value.index]) fail('Dit hoofdstuk is niet beschikbaar.');
+          seekTo(current().chapters[value.index].position);
+        } else if (value.type === 'resume') {
+          if (!resumePosition) fail('Geen eerdere afspeelpositie voor dit nummer.');
+          seekTo(resumePosition);
+        } else if (value.type === 'bookmark-add') {
+          if (!history.add(current(), position, value.label)) fail('Maximaal 20 bladwijzers per nummer.');
+          changed();
+        } else if (value.type === 'bookmark-remove') {
+          if (!history.remove(current(), value.id)) fail('Deze bladwijzer is niet meer beschikbaar.', 409);
+          changed();
+        } else {
+          const record = history.get(current()), bookmark = record && record.bookmarks.find(item => item.id === value.id);
+          if (!bookmark) fail('Deze bladwijzer is niet meer beschikbaar.', 409);
+          seekTo(bookmark.position);
+        }
+      } else
       if (value.type === 'play' || value.type === 'pause') {
+        if (value.type === 'play') sleepStoppedGeneration = -1;
         desiredPlaying = value.type === 'play'; enqueue(value.type);
       } else if (value.type === 'retry') {
         loadAt(index, position, true);
@@ -213,6 +279,8 @@ function makeReceiver(options) {
         else if (value.type === 'previous') { position = 0; enqueue('seek', { position: 0 }); }
         else { desiredPlaying = false; enqueue('pause'); }
       } else if (value.type === 'stop') {
+        if (position >= 5) history.remember(current(), position, duration, true);
+        clearSleep(); resumePosition = 0;
         desiredPlaying = false; state = 'idle'; queue = []; index = -1; position = 0; duration = 0;
         generation++; queueRevision++; enqueue('stop');
       } else fail('Onbekende opdracht.');
@@ -257,6 +325,7 @@ function makeReceiver(options) {
     '/remote.js': ['remote.js', 'application/javascript'], '/remote.css': ['remote.css', 'text/css'],
     '/tv.js': ['tv.js', 'application/javascript'], '/tv.css': ['tv.css', 'text/css'],
     '/waveform.js': ['waveform.js', 'application/javascript'],
+    '/session-ui.js': ['session-ui.js', 'application/javascript'], '/session.css': ['session.css', 'text/css'],
     '/vendor/qrcode.js': ['vendor/qrcode.js', 'application/javascript'],
     '/vendor/webOSTV.js': ['vendor/webOSTV.js', 'application/javascript'],
     '/demo-cover.svg': ['demo-cover.svg', 'image/svg+xml'], '/demo.mp3': ['demo.mp3', 'audio/mpeg']
@@ -305,15 +374,20 @@ function makeReceiver(options) {
         }
         if (route === '/api/display/report') {
           if (!displayAuth(request)) fail('Geen toegang.', 403);
-          const data = await body(request); lastDisplay = clock();
+          const data = await body(request); lastDisplay = clock(); checkSleep();
           if (data.generation !== generation || !current() || data.trackId !== current().id) return respond(response, 200, { ignored: true });
           if (['ready', 'playing', 'paused', 'buffering', 'error', 'ended'].indexOf(data.state) < 0) fail('Ongeldige afspeelstatus.');
           state = data.state;
           position = finite(data.position, 0, 604800) ? data.position : 0;
           duration = finite(data.duration, 0, 604800) ? data.duration : current().duration;
           error = String(data.error || '').slice(0, 240);
+          if (data.state === 'ended') history.remember(current(), 0, duration, true);
+          else if (position >= 5 && (data.state === 'playing' || data.state === 'paused')) history.remember(current(), position, duration, data.state === 'paused');
           if (data.state === 'error' || data.state === 'ended') desiredPlaying = false;
-          if (data.state === 'ended' && index + 1 < queue.length) loadAt(index + 1, 0, true);
+          if (data.state === 'ended' && ((sleepTimer && sleepTimer.mode === 'end-track') || sleepStoppedGeneration === generation)) {
+            clearSleep(); sleepStoppedGeneration = generation; enqueue('pause');
+          }
+          else if (data.state === 'ended' && index + 1 < queue.length) { position = 0; loadAt(index + 1, 0, true); }
           else changed();
           return respond(response, 200, { accepted: true });
         }
@@ -373,7 +447,7 @@ function makeReceiver(options) {
     }
   }, 10000);
   idle.unref();
-  server.on('close', () => clearInterval(idle));
+  server.on('close', () => { clearInterval(idle); clearSleep(); });
   return { server, command, snapshot, getCode: () => code, getDisplayToken: () => displayToken };
 }
 if (require.main === module) {
