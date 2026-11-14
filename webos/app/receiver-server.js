@@ -381,7 +381,7 @@ function makeReceiver(options) {
           position = finite(data.position, 0, 604800) ? data.position : 0;
           duration = finite(data.duration, 0, 604800) ? data.duration : current().duration;
           error = String(data.error || '').slice(0, 240);
-          if (data.state === 'ended') history.remember(current(), 0, duration, true);
+          if (data.state === 'ended') { resumePosition = 0; history.remember(current(), 0, duration, true); }
           else if (position >= 5 && (data.state === 'playing' || data.state === 'paused')) history.remember(current(), position, duration, data.state === 'paused');
           if (data.state === 'error' || data.state === 'ended') desiredPlaying = false;
           if (data.state === 'ended' && ((sleepTimer && sleepTimer.mode === 'end-track') || sleepStoppedGeneration === generation)) {
