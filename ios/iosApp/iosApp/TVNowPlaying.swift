@@ -488,6 +488,7 @@ struct TVSettingsView: View {
                         .font(.footnote).foregroundColor(.secondary)
                 }
                 }
+                LGConnectSettings(model: model)
                 Section("Connection") {
                     LabeledContent("Audio output", value: model.routeName)
                     LabeledContent("TV display", value: model.connectedDisplays > 0 ? "Connected" : "Not connected")
