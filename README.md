@@ -10,7 +10,7 @@ An experimental iOS and rooted-LG-webOS fork of [savo-o/resona](https://github.c
 | **TV display** | Sharp square cover over a blurred/dimmed cover background through Screen Mirroring | Keep Resona open and the phone unlocked |
 | **LG app** | The separate Resona TV webOS app fetches the stream and renders its own interface | The phone can disconnect after transfer; TV playback is independent |
 
-The four designs are **Cinema**, **Gallery**, **Ambient** and **Night**. Open the iPhone app's **TV** button to choose an output mode. LG app mode uses the local receiver rather than Apple's AirPlay picker.
+The four designs are **Cinema**, **Gallery**, **Ambient** and **Night**. **Gallery** follows the supplied TV reference: a centered cover, compact title and artist, cover-derived color gradients and a small playback indicator. It hides branding and the progress bar when idle; any TV-remote interaction brings the controls back. Open the iPhone app's **TV** button to choose an output mode. LG app mode uses the local receiver rather than Apple's AirPlay picker.
 
 ## Install the LG app using Homebrew Channel
 
@@ -22,7 +22,7 @@ https://raw.githubusercontent.com/TheMaxynator/resona-airplay/main/repo.json
 
 It publishes the current app version, icon, GitHub release download and exact SHA-256 checksum. TV releases are published only after protocol tests, a Node 12 compatibility check and a real-MP3 browser test pass. Refresh Homebrew Channel to discover subsequent versions. Existing IPKs are immutable; a new app version requires incrementing `webos/app/appinfo.json` and keeping the receiver and bootstrap version checks in sync. The catalog is updated from the actual published bytes.
 
-The **0.1.1** LG package is an early hardware-test candidate for a rooted webOS 23 TV with Homebrew Channel working as root. Open **Resona TV** on the television, scan its QR code or open the displayed address on your phone, then enter the six-digit code. The phone remote includes a bundled quiet test tone and controls for playback, position, layout and dimming. Installation and hardware checks are detailed in [webos/README.md](webos/README.md).
+The **0.1.2** LG package is an early hardware-test candidate for a rooted webOS 23 TV with Homebrew Channel working as root. Open **Resona TV** on the television, scan its QR code or open the displayed address on your phone, then enter the six-digit code. The phone remote includes a bundled quiet test tone and controls for playback, position, layout and dimming. Installation and hardware checks are detailed in [webos/README.md](webos/README.md).
 
 ## Companion iPhone build
 
@@ -34,8 +34,8 @@ The iPhone bundle ID remains `com.themaxynator.resona.airplay`, so this updates 
 
 ## Verified and pending
 
-- The complete iPhone device build, native typechecking and **six** native simulator tests passed in [the LG Connect build](https://github.com/TheMaxynator/resona-airplay/actions/runs/43584820502).
-- The LG receiver's **nine** protocol/security/lifecycle tests, Node 12 compatibility and browser playback tests passed in [the release workflow](https://github.com/TheMaxynator/resona-airplay/actions/runs/43585668393).
+- The complete iPhone device build, native typechecking and **eight** native simulator tests passed in [the LG Connect build](https://github.com/TheMaxynator/resona-airplay/actions/runs/43590334733).
+- The LG receiver's **thirteen** protocol/security/lifecycle tests, Node 12 compatibility and browser playback tests passed in [the release workflow](https://github.com/TheMaxynator/resona-airplay/actions/runs/43590334730).
 - Browser checks cover real MP3 decoding, PIN pairing, pause/seek, all four layouts, widths 320/390/768, safe text rendering and queue advancement after the phone closes. Layout images were visually inspected.
 - The IPA archive, version, arm64 executable, external scene declaration and local-network settings were checked after download. The public Homebrew JSON, release manifest and package checksum are verified separately.
 - The user confirmed pairing, playback, seeking, pause/resume and layout selection on an LG G3/webOS 23 using 0.1.0/2.0.2, and reported the artwork and native-queue issues addressed here. The 0.1.1/2.0.3 fixes still need a hardware retest. LG's gallery screensaver policy can dim and take over the image after 30 minutes; indefinite artwork display is not promised. The first real device test must check bootstrap, SoundCloud/HLS compatibility, phone locking and remote keys.
