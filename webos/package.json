@@ -1,0 +1,22 @@
+{
+  "name": "resona-webos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Resona artwork receiver for rooted LG webOS TVs",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "test": "node --test tests/server.test.js",
+    "test:browser": "node tests/browser.js",
+    "assets": "node scripts/assets.js",
+    "pretest": "npm run assets",
+    "pretest:browser": "npm run assets",
+    "prestart": "npm run assets",
+    "start": "node app/receiver-server.js --host 127.0.0.1 --port 42700",
+    "package": "node scripts/package.js"
+  },
+  "devDependencies": {
+    "@webos-tools/cli": "3.2.6",
+    "playwright": "1.62.1",
+    "qrcode-generator": "1.4.4"
+  }
+}
