@@ -52,6 +52,24 @@ const { makeReceiver } = require('../app/receiver-server');
     }
     await phone.setViewportSize({ width: 390, height: 844 });
     await phone.screenshot({ path: path.join(output, 'phone.png'), fullPage: true });
+    const token = await phone.evaluate(() => localStorage.getItem('resona-tv-token'));
+    async function command(body) {
+      const response = await fetch(base + '/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+      assert.equal(response.status, 200); return response.json();
+    }
+    const generation = receiver.snapshot().generation;
+    const audioSource = await tv.locator('#audio').getAttribute('src');
+    await command({ type: 'artwork', generation, trackId: 'resona-test', artworkRevision: 1, artworkUrl: base + '/missing-cover.jpg' });
+    await tv.waitForFunction(() => document.getElementById('cover').hidden);
+    const inlineCover = 'data:image/png;base64,' + fs.readFileSync(path.join(__dirname, '../app/icon.png')).toString('base64');
+    await command({ type: 'artwork', generation, trackId: 'resona-test', artworkRevision: 2, artworkUrl: inlineCover });
+    await tv.waitForFunction(() => !document.getElementById('cover').hidden && document.getElementById('cover').naturalWidth > 0 && document.getElementById('backdrop').style.backgroundImage !== '');
+    assert.equal(await tv.locator('#audio').getAttribute('src'), audioSource);
+    assert.equal(await tv.locator('#audio').evaluate(audio => audio.paused && Math.abs(audio.currentTime - 7) < 0.5), true);
+    assert.equal(receiver.snapshot().generation, generation);
+    await phone.getByLabel('Ontwerp', { exact: true }).selectOption('cinema');
+    await tv.waitForFunction(() => document.body.dataset.layout === 'cinema');
+    await tv.screenshot({ path: path.join(output, 'late-artwork.png') });
     // The queue is resolved before handoff; the phone can disappear without stopping queue advancement.
     await phone.locator('#queue-form').locator('..').getByText('Wachtrij importeren', { exact: true }).click();
     await phone.getByLabel('Nummers als JSON').fill(JSON.stringify([
@@ -61,6 +79,11 @@ const { makeReceiver } = require('../app/receiver-server');
     await phone.getByRole('button', { name: 'Wachtrij naar tv', exact: true }).click();
     await tv.getByRole('heading', { name: 'First in queue', exact: true }).waitFor();
     await tv.waitForFunction(() => !document.getElementById('audio').paused);
+    await phone.locator('#remote-next').click();
+    await tv.getByRole('heading', { name: '<img src=x onerror=alert(1)>', exact: true }).waitFor();
+    await phone.locator('#remote-previous').click();
+    await tv.getByRole('heading', { name: 'First in queue', exact: true }).waitFor();
+    await tv.waitForFunction(() => !document.getElementById('audio').paused);
     await phoneContext.close();
     await tv.locator('#audio').evaluate(audio => { audio.currentTime = 19.4; });
     await tv.getByRole('heading', { name: '<img src=x onerror=alert(1)>', exact: true }).waitFor({ timeout: 10000 });
@@ -68,8 +91,8 @@ const { makeReceiver } = require('../app/receiver-server');
     assert.equal(await tv.locator('#cover').isVisible(), false);
     assert.equal(receiver.snapshot().index, 1);
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(output, 'browser-results.json'), JSON.stringify({ result: 'passed', layouts: 4, phoneWidths: [320, 390, 768], realAudio: 'MP3', controls: ['pair', 'play', 'pause', 'seek', 'layout'], autonomousQueue: true, errors }, null, 2));
-    console.log('PASS: PIN pairing, real MP3 playback, pause/seek, four layouts, responsive controls, autonomous queue, and text injection handling.');
+    fs.writeFileSync(path.join(output, 'browser-results.json'), JSON.stringify({ result: 'passed', layouts: 4, phoneWidths: [320, 390, 768], realAudio: 'MP3', controls: ['pair', 'play', 'pause', 'seek', 'layout', 'next', 'previous'], lateArtworkWithoutReload: true, autonomousQueue: true, errors }, null, 2));
+    console.log('PASS: pairing, real MP3 playback, pause/seek, layouts, late artwork without audio reload, next/previous, autonomous queue and safe text.');
   } catch (error) {
     if (!tv.isClosed()) {
       await tv.screenshot({ path: path.join(output, 'failure-tv.png') }).catch(() => {});

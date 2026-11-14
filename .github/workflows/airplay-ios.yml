@@ -59,12 +59,12 @@ jobs:
           mkdir -p build/ipa/Payload
           cp -R build/device/Build/Products/Debug-iphoneos/Resona.app build/ipa/Payload/
           cd build/ipa
-          zip -qry ../Resona-TV-2.0.2.ipa Payload
+          zip -qry ../Resona-TV-2.0.3.ipa Payload
       - name: Upload unsigned test IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Resona-TV-2.0.2-unsigned
-          path: ios/iosApp/build/Resona-TV-2.0.2.ipa
+          name: Resona-TV-2.0.3-unsigned
+          path: ios/iosApp/build/Resona-TV-2.0.3.ipa
           if-no-files-found: error
           retention-days: 30
       - name: Upload test results and logs

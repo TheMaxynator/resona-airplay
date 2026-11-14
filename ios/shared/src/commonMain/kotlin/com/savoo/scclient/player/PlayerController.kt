@@ -51,8 +51,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import com.savoo.scclient.compat.JSONArray
@@ -1296,6 +1302,59 @@ class PlayerController(
                 queueIndex = queueIndex,
             )
         }
+    }
+
+    // Resolve an immutable snapshot for the independent LG receiver. This path
+    // deliberately bypasses iPhone-only cached files and never mutates playback,
+    // queue order, duplicate entries, or unavailable-track database flags.
+    suspend fun prepareTVQueue(expectedTrackId: String, currentURL: String): String = withTimeout(50_000L) {
+        val selected = queue.getOrNull(queueIndex) ?: error("Choose a track before sending the queue.")
+        check(selected.track.id.toString() == expectedTrackId) { "The iPhone track changed. Send the queue again." }
+        check(currentURL.startsWith("https://") || currentURL.startsWith("http://")) { "Choose an online track for the TV." }
+        val first = (queueIndex - 10).coerceAtLeast(0)
+        val entries = queue.drop(first).take(100)
+        val originalIds = queue.map { it.id }
+        val workers = Semaphore(6)
+        val resolved = coroutineScope {
+            entries.map { entry -> async {
+                workers.withPermit {
+                    if (entry.id == selected.id) entry to (entry.track to currentURL)
+                    else {
+                        val result = withTimeoutOrNull(8_000L) {
+                            try {
+                                val track = if (entry.track.media != null) entry.track
+                                    else withContext(Dispatchers.IO) { trackRepository.getTrack(entry.track.id) }
+                                if (track.restrictionReason() != null) null
+                                else withContext(Dispatchers.IO) { trackRepository.resolvePlayableStream(track) }?.let { track to it.url }
+                            } catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { null }
+                        }
+                        result?.let { entry to it }
+                    }
+                }
+            } }.awaitAll().filterNotNull()
+        }
+        check(queue.getOrNull(queueIndex)?.id == selected.id && queue.map { it.id } == originalIds) {
+            "The iPhone queue changed while preparing it. Send it again."
+        }
+        val index = resolved.indexOfFirst { it.first.id == selected.id }
+        check(index >= 0) { "The selected track could not be sent." }
+        val tracks = JSONArray()
+        resolved.forEach { (entry, item) ->
+            val (track, url) = item
+            check(url.startsWith("https://") || url.startsWith("http://")) { "The TV needs online stream links." }
+            tracks.put(JSONObject().apply {
+                put("id", "queue-${entry.id}-${track.id}")
+                put("title", track.title); put("artist", track.user.username)
+                put("url", url)
+                put("artworkUrl", track.artworkUrl?.replace("-large", "-t500x500") ?: "")
+                put("duration", track.durationMs.coerceAtLeast(0L) / 1000.0)
+            })
+        }
+        JSONObject().apply {
+            put("sourceId", expectedTrackId); put("tracks", tracks); put("index", index)
+            put("skipped", entries.size - resolved.size); put("truncated", entries.size < originalIds.size)
+        }.toString()
     }
 
     private fun doPlay(track: Track, requestIndex: Int, requestId: Long, startPositionMs: Long = 0L) {

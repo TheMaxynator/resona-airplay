@@ -26,6 +26,7 @@ import com.savoo.scclient.di.appModule
 import com.savoo.scclient.player.AudioPlayer
 import com.savoo.scclient.player.IosAudioPlayer
 import com.savoo.scclient.player.PlayerController
+import com.savoo.scclient.ui.navigation.TVConnectLauncher
 import com.savoo.scclient.work.AutoExportManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,9 @@ import org.koin.core.context.startKoin
 import org.koin.dsl.module
 import org.koin.mp.KoinPlatform
 import platform.Foundation.NSLog
+import platform.Foundation.NSNotificationCenter
+import platform.Foundation.NSOperationQueue
+import platform.darwin.NSObjectProtocol
 import platform.UIKit.UIApplication
 import platform.UIKit.UIViewController
 
@@ -46,6 +50,7 @@ private val iosModule = module {
 
 private var started = false
 private var bridgeWebView: WebView? = null
+private var tvQueueObserver: NSObjectProtocol? = null
 
 @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
 private fun installCrashLogger() {
@@ -78,6 +83,23 @@ private fun startApp() {
             .build()
     }
     val koin = KoinPlatform.getKoin()
+    TVConnectLauncher.open = {
+        NSNotificationCenter.defaultCenter.postNotificationName("ResonaOpenTVSettings", null)
+    }
+    tvQueueObserver = NSNotificationCenter.defaultCenter.addObserverForName(
+        "ResonaTVQueueRequest", null, NSOperationQueue.mainQueue,
+    ) { note ->
+        val input = note?.userInfo ?: return@addObserverForName
+        val requestId = input["requestId"] as? String ?: return@addObserverForName
+        val sourceId = input["sourceId"] as? String ?: return@addObserverForName
+        val streamUrl = input["streamUrl"] as? String ?: return@addObserverForName
+        CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
+            val response = mutableMapOf<Any?, Any?>("requestId" to requestId)
+            try { response["json"] = koin.get<PlayerController>().prepareTVQueue(sourceId, streamUrl) }
+            catch (_: Exception) { response["error"] = "The queue could not be prepared. Keep Resona open, check the connection and send again." }
+            NSNotificationCenter.defaultCenter.postNotificationName("ResonaTVQueueReply", null, response)
+        }
+    }
     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
         val provider = koin.get<ClientIdProvider>()
         if (provider.cachedOrFallback().isBlank()) provider.refresh()

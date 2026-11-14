@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.CloudDownload
@@ -65,6 +67,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.savoo.scclient.resources.*
 import com.savoo.scclient.compat.Toast
+
 import com.savoo.scclient.data.model.Track
 import com.savoo.scclient.data.remote.DeepLinkResult
 import kotlinx.coroutines.Dispatchers
@@ -92,6 +95,9 @@ import com.savoo.scclient.ui.screens.settings.UpdateCheckHost
 import com.savoo.scclient.ui.screens.stats.StatisticsScreen
 import com.savoo.scclient.ui.navigation.DeepLinkTarget
 import com.savoo.scclient.ui.components.ConnectivityBanner
+
+// Installed by the iOS host before Compose starts. Other platforms omit the button.
+object TVConnectLauncher { var open: (() -> Unit)? = null }
 
 private val navOrder = listOf(Screen.Home.route, Screen.Search.route)
 
@@ -486,6 +492,12 @@ fun RootScreen(initialDeepLink: DeepLinkTarget? = null, deepLinkKey: Int = 0) {
                             )
                         }
                     }
+                }
+                TVConnectLauncher.open?.let { openTV ->
+                    FilledTonalIconButton(
+                        onClick = openTV,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = dock + 12.dp),
+                    ) { Icon(Icons.Filled.Tv, contentDescription = "TV display settings") }
                 }
             }
             }

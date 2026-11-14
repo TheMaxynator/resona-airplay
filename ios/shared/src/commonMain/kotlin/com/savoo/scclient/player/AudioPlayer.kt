@@ -15,6 +15,7 @@ data class NowPlayingInfo(
     val artist: String,
     val artworkUrl: String?,
     val durationMs: Long,
+    val trackId: String = "",
 )
 
 interface RemoteCommandHandler {

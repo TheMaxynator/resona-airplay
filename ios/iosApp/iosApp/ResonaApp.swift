@@ -6,6 +6,7 @@ import Shared
 struct ResonaApp: App {
     @UIApplicationDelegateAdaptor(ResonaAppDelegate.self) private var appDelegate
     @StateObject private var tvModel = TVPlaybackModel.shared
+    @State private var showingTVSettings = false
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -26,9 +27,8 @@ struct ResonaApp: App {
             } else {
                 ComposeView()
                     .ignoresSafeArea()
-                    .overlay(alignment: .topTrailing) {
-                        TVDisplayButton(model: tvModel).padding(.trailing, 12).padding(.top, 4)
-                    }
+                    .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ResonaOpenTVSettings"))) { _ in showingTVSettings = true }
+                    .sheet(isPresented: $showingTVSettings) { TVSettingsView(model: tvModel) }
             }
         }
         .onChange(of: scenePhase) { phase in

@@ -21,10 +21,23 @@
     document.body.classList.toggle('no-track', !item);
     text('title', item ? item.title : 'Je muziek. Op groot scherm.');
     text('artist', item ? item.artist : 'Koppel je iPhone om een nummer te kiezen.');
-    image.hidden = !item || !item.artworkUrl; document.getElementById('placeholder').hidden = !image.hidden;
-    if (item && item.artworkUrl) { image.src = item.artworkUrl; image.alt = 'Albumhoes van ' + item.title; document.getElementById('backdrop').style.backgroundImage = 'url(' + JSON.stringify(item.artworkUrl) + ')'; }
-    else { image.removeAttribute('src'); document.getElementById('backdrop').style.backgroundImage = ''; }
-    image.onerror = function () { image.hidden = true; document.getElementById('placeholder').hidden = false; document.getElementById('backdrop').style.backgroundImage = ''; };
+    var source = item && item.artworkUrl || '';
+    if (image.dataset.source === source) return;
+    image.dataset.source = source;
+    image.hidden = true; document.getElementById('placeholder').hidden = false;
+    document.getElementById('backdrop').style.backgroundImage = '';
+    image.onload = function () {
+      if (image.dataset.source !== source || !image.naturalWidth) return;
+      image.hidden = false; document.getElementById('placeholder').hidden = true;
+      document.getElementById('backdrop').style.backgroundImage = 'url(' + JSON.stringify(source) + ')';
+    };
+    image.onerror = function () {
+      if (image.dataset.source !== source) return;
+      image.hidden = true; document.getElementById('placeholder').hidden = false;
+      document.getElementById('backdrop').style.backgroundImage = '';
+    };
+    if (source) { image.alt = 'Albumhoes van ' + item.title; image.src = source; }
+    else image.removeAttribute('src');
   }
   function preferences(value) {
     document.body.dataset.layout = value.layout;
@@ -61,6 +74,7 @@
     if (command.type === 'load') { load(command); return; }
     if (command.type === 'preferences') { preferences(command.preferences); return; }
     if (command.generation !== generation) return;
+    if (command.type === 'artwork' && current && command.trackId === current.id) { current.artworkUrl = command.artworkUrl; paint(current); return; }
     if (command.type === 'play') play();
     if (command.type === 'pause') { wantPlay = false; audio.pause(); report('paused'); }
     if (command.type === 'seek' && current) { requestedPosition = command.position; if (ready) { audio.currentTime = command.position; progress(); report(audio.paused ? 'paused' : 'playing'); } }
@@ -85,6 +99,10 @@
         sequence = snapshot.sequence;
       } else {
         snapshot.commands.forEach(function (command) { if (command.sequence > sequence) { execute(command); sequence = command.sequence; } });
+        // State is authoritative if the bounded command history was overtaken.
+        if (current && snapshot.track && current.id === snapshot.track.id && current.artworkUrl !== snapshot.track.artworkUrl) {
+          current.artworkUrl = snapshot.track.artworkUrl; paint(current);
+        }
       }
       preferences(snapshot.preferences);
     } catch (_) { message('De ontvanger is niet bereikbaar. Open Resona TV opnieuw.'); }
