@@ -43,6 +43,7 @@ function makeReceiver(options) {
   let revision = 0, generation = 0, queue = [], index = -1, position = 0;
   let desiredPlaying = false, state = 'idle', duration = 0, error = '';
   let preferences = Object.assign({}, DEFAULTS), commands = [], sequence = 0;
+  const startedAt = clock();
   let lastDisplay = 0;
   const dataDir = options.dataDir;
   if (dataDir) {
@@ -256,7 +257,13 @@ function makeReceiver(options) {
   server.requestTimeout = 10000;
   server.headersTimeout = 10000;
   server.keepAliveTimeout = 5000;
-  const idle = setInterval(() => { if (options.idleTimeout && clock() - lastDisplay > options.idleTimeout) server.close(); }, 10000);
+  const sockets = new Set();
+  server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  const idle = setInterval(() => {
+    if (options.idleTimeout && clock() - Math.max(startedAt, lastDisplay) > options.idleTimeout) {
+      server.close(); sockets.forEach(socket => socket.destroy());
+    }
+  }, 10000);
   idle.unref();
   server.on('close', () => clearInterval(idle));
   return { server, command, snapshot, getCode: () => code, getDisplayToken: () => displayToken };
