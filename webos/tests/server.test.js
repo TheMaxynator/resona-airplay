@@ -90,3 +90,12 @@ test('health supports the packaged bootstrap while API responses do not permit c
   assert.equal((await fetch(f.base + '/%2e%2e/receiver-server.js')).status, 404);
   assert.equal((await fetch(f.base + '/api/command', { method: 'POST', body: 'oops' })).status, 415);
 });
+test('serves MP3 byte ranges so native media players can seek', async t => {
+  const f = await fixture(t);
+  const original = await fetch(f.base + '/demo.mp3'); const bytes = Buffer.from(await original.arrayBuffer());
+  const result = await fetch(f.base + '/demo.mp3', { headers: { Range: 'bytes=100-299' } });
+  assert.equal(result.status, 206);
+  assert.equal(result.headers.get('content-range'), 'bytes 100-299/' + bytes.length);
+  assert.deepEqual(Buffer.from(await result.arrayBuffer()), bytes.subarray(100, 300));
+  assert.equal((await fetch(f.base + '/demo.mp3', { headers: { Range: 'bytes=99999999-' } })).status, 416);
+});
