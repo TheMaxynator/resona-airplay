@@ -69,6 +69,13 @@ const { makeReceiver } = require('../app/receiver-server');
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'browser-results.json'), JSON.stringify({ result: 'passed', layouts: 4, phoneWidths: [320, 390, 768], realAudio: 'MP3', controls: ['pair', 'play', 'pause', 'seek', 'layout'], autonomousQueue: true, errors }, null, 2));
     console.log('PASS: PIN pairing, real MP3 playback, pause/seek, four layouts, responsive controls, autonomous queue, and text injection handling.');
+  } catch (error) {
+    if (!tv.isClosed()) {
+      await tv.screenshot({ path: path.join(output, 'failure-tv.png') }).catch(() => {});
+      const detail = await tv.evaluate(() => { const a = document.getElementById('audio'); return { time: a.currentTime, duration: Number.isFinite(a.duration) ? a.duration : null, paused: a.paused, readyState: a.readyState, seekable: Array.from({ length: a.seekable.length }, (_, i) => [a.seekable.start(i), a.seekable.end(i)]), message: document.getElementById('message').textContent }; }).catch(() => ({}));
+      fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ receiver: receiver.snapshot(), media: detail, errors }, null, 2));
+    }
+    throw error;
   } finally {
     await browser.close(); receiver.server.closeAllConnections(); await new Promise(r => receiver.server.close(r));
   }
