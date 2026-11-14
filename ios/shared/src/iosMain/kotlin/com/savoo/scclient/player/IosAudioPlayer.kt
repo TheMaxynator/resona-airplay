@@ -345,6 +345,8 @@ class IosAudioPlayer(private val effects: SoundEffects) : AudioPlayer {
             "player" to player,
             "title" to (info?.title ?: ""),
             "artist" to (info?.artist ?: ""),
+            "trackId" to (info?.trackId ?: ""),
+            "artworkUrl" to (info?.artworkUrl ?: ""),
             "duration" to NSNumber(double = _status.value.durationMs.coerceAtLeast(info?.durationMs ?: 0L) / 1000.0),
             "hasTrack" to NSNumber(bool = info != null),
         )
