@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="resona-display-token" content="RESONA_DISPLAY_TOKEN"><title>Resona TV</title><link rel="stylesheet" href="tv.css"></head>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="resona-display-token" content="RESONA_DISPLAY_TOKEN"><title>Resona TV</title><link rel="stylesheet" href="tv.css"><link rel="stylesheet" href="session.css"></head>
 <body data-layout="cinema">
   <div id="backdrop" aria-hidden="true"></div><div id="color-wash" aria-hidden="true"></div><div class="shade" aria-hidden="true"></div>
   <main id="composition" aria-label="Huidig nummer">
@@ -8,7 +8,11 @@
   </main>
   <section id="pairing" class="pairing" aria-label="Koppel je iPhone"><div><div class="eyebrow">KOPPEL JE IPHONE</div><h2>Open dit adres op je telefoon</h2><p id="remote-url" class="remote-url">Verbinding wordt voorbereid…</p><p class="pair-help">Voer deze code in:</p><div id="pair-code" class="pair-code" aria-live="polite">··· ···</div><p id="pair-caption">De code vernieuwt automatisch.</p><button id="reset-pairing">Vergeet gekoppelde telefoons</button></div><div id="qr" aria-label="QR-code om de telefoonbediening te openen"></div></section>
   <div id="message" role="status" hidden></div>
-  <nav id="toolbar" aria-label="Tv-bediening"><button id="previous" aria-label="Vorig nummer">Vorige</button><button id="toggle">Afspelen</button><button id="next" aria-label="Volgend nummer">Volgende</button><button id="layout">Cinema</button><button id="progress-mode" aria-label="Voortgangsbalk">Balk: altijd</button><button id="waveform-toggle" aria-label="Trackwaveform">Golfvorm: uit</button><button id="pair">Koppelen</button></nav>
+  <div id="chapter-caption" hidden><span>NU IN DE SET</span><p id="chapter-name"></p></div>
+  <div id="chapter-markers" aria-hidden="true"></div>
+  <aside id="up-next" hidden><span>HIERNA</span><p id="up-next-title"></p><small id="up-next-artist"></small></aside>
+  <aside id="session-panel" class="session-tools" role="dialog" aria-modal="true" aria-label="Je sessie" hidden></aside>
+  <nav id="toolbar" aria-label="Tv-bediening"><button id="previous" aria-label="Vorig nummer">Vorige</button><button id="toggle">Afspelen</button><button id="next" aria-label="Volgend nummer">Volgende</button><button id="layout">Gallery</button><button id="progress-mode" aria-label="Voortgangsbalk">Balk: altijd</button><button id="waveform-toggle" aria-label="Trackwaveform">Golfvorm: uit</button><button id="session-open">Sessie</button><button id="pair">Koppelen</button></nav>
   <audio id="audio" preload="auto"></audio>
-  <script src="vendor/webOSTV.js"></script><script src="vendor/qrcode.js"></script><script src="waveform.js"></script><script src="tv.js"></script>
+  <script src="vendor/webOSTV.js"></script><script src="vendor/qrcode.js"></script><script src="waveform.js"></script><script src="session-ui.js"></script><script src="tv.js"></script>
 </body></html>
