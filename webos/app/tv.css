@@ -39,3 +39,5 @@ body[data-progress-mode=auto].controls-visible #progress-area{opacity:1}
 .waveform-clip{overflow:hidden;transform:translateX(-100%);will-change:transform;transition:transform .3s linear}
 .waveform-played{transform:translateX(100%);will-change:transform;transition:transform .3s linear}
 #toolbar{max-width:96vw;flex-wrap:wrap;justify-content:center;width:max-content}
+
+#reset-pairing{font-size:1vw;min-height:40px;padding:10px 16px;margin-top:8px}
