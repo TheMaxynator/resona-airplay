@@ -1,94 +1,33 @@
-<p align="center">
-  <img src="assets/logo-git.png" width="128" alt="Resona">
-</p>
+# Resona TV / AirPlay fork
 
-<h1 align="center">Resona</h1>
+An experimental iOS fork of [savo-o/resona](https://github.com/savo-o/resona), focused on album artwork over AirPlay and a dedicated television Now Playing display. Based on Resona **v2.0**, commit `0adbfd1`. See the [original README](https://github.com/savo-o/resona/blob/v2.0/README.md) for the upstream app and Android features.
 
-<p align="center">
-  English · <a href="README.ru.md">Русский</a>
-</p>
+## Two output modes
 
-<p align="center">
-  An open source SoundCloud client for Android, with an iOS version in beta.<br>
-  No ads. No account required.
-  <a href="https://keepandroidopen.org" target="_blank" rel="noopener noreferrer">
-    Resona supports #KeepAndroidOpen
-</a>
-</p>
+| Mode | What it sends | iPhone usage | TV presentation |
+| --- | --- | --- | --- |
+| **Audio only** | Music, track information and cover metadata | Background playback and screen locking | Controlled by the AirPlay receiver; artwork visibility varies by TV |
+| **TV display** | Music and a separate artwork window through Screen Mirroring | Keep Resona open and the phone unlocked | Four custom layouts with a square cover and faded cover background |
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Android-26+-3DDC84?logo=android&logoColor=white">
-  <img src="https://img.shields.io/badge/iOS-16+-000000?logo=apple&logoColor=white">
-  <img src="https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white">
-  <img src="https://img.shields.io/badge/License-GPLv3-blue.svg">
-</p>
+Open the **TV** button in the top-right corner to choose the mode. Selecting a mode does not select a system route: for audio-only playback stop Screen Mirroring, then use the audio AirPlay picker; for the custom display select the TV under Control Center → Screen Mirroring.
 
-## Screenshots
+## Layouts
 
-<p align="center">
-  <img src="screenshots/eng_main.png" width="220">
-  <img src="screenshots/player_both.png" width="220">
-  <img src="screenshots/eng_customization.png" width="220">
-</p>
+- **Cinema:** large cover on the left, track details on the right.
+- **Gallery:** centered cover with track details underneath.
+- **Ambient:** immersive faded background with a compact cover and title in the lower corner.
+- **Night:** dimmed artwork and minimal information.
 
-## Install
+Background dimming and progress visibility are adjustable and remembered. Artwork changes crossfade, missing covers receive a neutral placeholder, and non-square covers keep their aspect ratio. This fork reuses the existing audio player and does not add a second audio stream.
 
-Grab the latest APK from [GitHub Releases](https://github.com/savo-o/resona/releases/latest). Resona isn't on Google Play, so you'll need to allow installs from your file manager or browser.
+## Build and testing
 
-You can also track updates automatically with [Obtainium](https://github.com/ImranR98/Obtainium), just point it at this repo.
+The **AirPlay iOS** workflow typechecks the native display, builds an unsigned `Resona-TV-2.0.1.ipa`, then runs iOS Simulator tests for metadata changes, mode transitions, display lifecycle, invalid progress values and four layout renders. Download the IPA from a successful workflow run's artifacts and sign it using your usual sideloading method.
 
-### iOS version (beta)
+The test app has a separate bundle identifier (`com.themaxynator.resona.airplay`) and display name **Resona TV**. It installs alongside upstream and starts with its own app data. Its build number is 18; upstream v2.0 is build 17.
 
-Grab the IPA from [GitHub Releases](https://github.com/savo-o/resona/releases/latest) (or a fresher build from [canary](https://github.com/savo-o/resona/releases/tag/canary)) and sideload it with [Sideloadly](https://sideloadly.io) (recommended), [AltStore](https://altstore.io) or [SideStore](https://sidestore.io). The IPA is unsigned and Resona will never be on the App Store. With a free Apple ID the signature lasts 7 days, so it has to be refreshed weekly (all three can do it automatically).
-
-New to sideloading? Follow the [step-by-step install guide](https://savo-o.github.io/resona/ios.html).
-
-The iOS version is a separate port of the Android app, updated less often, so its version can lag behind (e.g. `Resona-ios-1.7.ipa` attached to a 1.9 release). It gets fixes when SoundCloud breaks something, but new features land on Android first and some may never make it to iOS.
-
-## Features
-
-- **Open source, no ads, no telemetry.**
-- No account required, log in only if you want to sync your own likes
-- Offline downloads, plus a folder watcher that picks up local files automatically
-- Import tracks straight from Telegram chats (Android only)
-- Mix that keeps discovering new stuff from artists you already like
-- Lyrics for pretty much anything, even niche tracks, with a few sources chained as fallback and synced timing where it's available
-- Listening stats
-- Custom color themes and app icons, dynamic color that adapts to the track's artwork
-
-## Build
-
-Debug:
-
-```bash
-./gradlew assembleDebug
-```
-
-iOS (macOS with Xcode required): open `ios/iosApp/iosApp.xcodeproj` and run the `iosApp` scheme.
-
-Want to dig into the code? [ARCHITECTURE.md](ARCHITECTURE.md) is a quick map of how everything fits together.
-
-## Philosophy
-
-Resona will always be free and open source. No subscriptions, no paywalls, no telemetry, no analytics - ever.
-
-## Community
-
-Questions, bugs, ideas: [t.me/resona_tg](https://t.me/resona_tg)
-
-Want to help with code, translations or bug reports? Check out [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=savo-o%2Fresona&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=savo-o/resona&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=savo-o/resona&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=savo-o/resona&type=date&legend=top-left" />
- </picture>
-</a>
+A simulator build cannot verify a physical LG AirPlay receiver. The [research, limitations and device test checklist](AIRPLAY.md) distinguish implementation from verified hardware behavior. External-display behavior inside LiveContainer has not been verified; a directly sideloaded installation is the reference test configuration.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0.
-See the `LICENSE` file for details.
+GPL-3.0, as upstream. This is an independent fork, not an official Resona release.
