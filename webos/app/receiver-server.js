@@ -6,7 +6,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
-const VERSION = '0.1.3';
+const VERSION = '0.2.0';
 const LAYOUTS = ['cinema', 'gallery', 'ambient', 'night'];
 const DEFAULTS = { layout: 'cinema', dim: 0.48, progress: true, waveform: false };
 function progressModes() { return { cinema: 'always', gallery: 'always', ambient: 'always', night: 'always' }; }
@@ -35,11 +35,21 @@ function track(value, index) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('Ongeldig nummer.');
   return {
     id: String(value.id || ('track-' + index)).slice(0, 128),
+    sourceId: /^[1-9]\d{0,17}$/.test(String(value.sourceId || '')) ? String(value.sourceId) : '',
+    artworkRemoteUrl: value.artworkRemoteUrl ? url(value.artworkRemoteUrl, false) : '',
     title: displayText(value.title, 'Onbekend nummer'),
     artist: displayText(value.artist), waveformUrl: waveformLink(value.waveformUrl),
     url: url(value.url, false), artworkUrl: value.artworkUrl ? url(value.artworkUrl, true) : '',
     duration: finite(value.duration, 0, 604800) ? value.duration : 0
   };
+}
+function publicArtwork(item) { return item.artworkRemoteUrl || (/^https?:/.test(item.artworkUrl) ? item.artworkUrl : ''); }
+function uniqueTracks(values, existing) {
+  const used = new Set((existing || []).map(item => item.id));
+  return values.map(track).map(item => {
+    while (used.has(item.id)) item.id = item.id.slice(0, 100) + '-' + crypto.randomBytes(8).toString('hex');
+    used.add(item.id); return item;
+  });
 }
 function loopback(address) { return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'; }
 function equal(a, b) {
@@ -52,7 +62,7 @@ function makeReceiver(options) {
   const clock = options.now || Date.now;
   const displayToken = crypto.randomBytes(32).toString('hex');
   let code, codeExpires, sessions = new Map(), failures = new Map();
-  let revision = 0, generation = 0, queue = [], index = -1, position = 0;
+  let revision = 0, generation = 0, queueRevision = 0, queue = [], index = -1, position = 0;
   let desiredPlaying = false, state = 'idle', duration = 0, error = '';
   let artworkRevision = 0;
   let preferences = Object.assign({}, DEFAULTS, { progressModes: progressModes() }), commands = [], sequence = 0;
@@ -60,7 +70,21 @@ function makeReceiver(options) {
   const startedAt = clock();
   let lastDisplay = 0;
   const dataDir = options.dataDir;
+  function sessionKey(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
+  function saveSessions() {
+    if (!dataDir) return;
+    fs.mkdirSync(dataDir, { recursive: true, mode: 448 });
+    const temporary = path.join(dataDir, 'paired-devices.json.tmp');
+    fs.writeFileSync(temporary, JSON.stringify(Array.from(sessions, entry => ({ hash: entry[0], name: entry[1] }))), { mode: 384 });
+    fs.renameSync(temporary, path.join(dataDir, 'paired-devices.json'));
+  }
   if (dataDir) {
+    try {
+      const savedDevices = JSON.parse(fs.readFileSync(path.join(dataDir, 'paired-devices.json'), 'utf8'));
+      if (Array.isArray(savedDevices)) savedDevices.slice(0, 8).forEach(device => {
+        if (device && /^[a-f0-9]{64}$/.test(device.hash) && typeof device.name === 'string') sessions.set(device.hash, device.name.slice(0, 100));
+      });
+    } catch (_) {}
     try {
       const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'preferences.json'), 'utf8'));
       if (LAYOUTS.indexOf(saved.layout) >= 0) preferences.layout = saved.layout;
@@ -76,10 +100,12 @@ function makeReceiver(options) {
   function current() { return queue[index] || null; }
   function snapshot(includeURLs) {
     const item = current();
-    return { protocol: 1, version: VERSION, revision, generation, sequence, receiverOnline: online(),
+    return { protocol: 1, version: VERSION, revision, generation, sequence, queueRevision, receiverOnline: online(),
+      capabilities: { queueEditing: true, persistentPairing: true },
       trackVersion: generation + ':' + artworkRevision,
-      track: item ? (includeURLs ? item : { id: item.id, title: item.title, artist: item.artist, artworkUrl: item.artworkUrl, waveformAvailable: !!item.waveformUrl, duration: item.duration }) : null,
-      queue: queue.map((t, i) => ({ id: t.id, title: t.title, artist: t.artist, current: i === index })),
+      track: item ? (includeURLs ? item : { id: item.id, sourceId: item.sourceId, title: item.title, artist: item.artist, artworkRemoteUrl: publicArtwork(item), artworkUrl: item.artworkUrl, waveformAvailable: !!item.waveformUrl, duration: item.duration }) : null,
+      queue: queue.map((t, i) => includeURLs ? { id: t.id, title: t.title, artist: t.artist, current: i === index } :
+        { id: t.id, sourceId: t.sourceId, title: t.title, artist: t.artist, artworkUrl: publicArtwork(t), waveformUrl: t.waveformUrl, duration: t.duration, current: i === index }),
       index, state, position, duration: duration || (item && item.duration) || 0, desiredPlaying,
       error, preferences: appearance(), pairedDevices: sessions.size };
   }
@@ -91,20 +117,63 @@ function makeReceiver(options) {
     changed();
   }
   function loadAt(next, start, play) {
-    index = next; generation++; position = start || 0; duration = current().duration;
+    index = next; generation++; queueRevision++; position = start || 0; duration = current().duration;
     state = 'loading'; error = ''; desiredPlaying = play; artworkRevision = 0;
     enqueue('load', { track: current(), position, autoplay: play });
   }
   function command(value) {
     if (!value || typeof value !== 'object') fail('Ongeldige opdracht.');
     if (value.type === 'load') {
+      if (value.queueRevision !== undefined && value.queueRevision !== queueRevision) fail('De wachtrij is gewijzigd. Kies het nummer opnieuw.', 409);
       if (!Array.isArray(value.tracks) || !value.tracks.length || value.tracks.length > 100) fail('Kies 1 tot 100 nummers.');
-      const nextQueue = value.tracks.map(track);
+      const nextQueue = uniqueTracks(value.tracks);
       const nextIndex = value.index === undefined ? 0 : value.index;
       if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= nextQueue.length) fail('Ongeldige wachtrijpositie.');
       const start = value.position === undefined ? 0 : value.position;
       if (!finite(start, 0, 604800)) fail('Ongeldige afspeelpositie.');
       queue = nextQueue; loadAt(nextIndex, start, value.autoplay !== false);
+    } else if (['queue-add', 'queue-reorder', 'queue-remove', 'queue-play', 'queue-refresh'].indexOf(value.type) >= 0) {
+      if (!Number.isSafeInteger(value.queueRevision) || value.queueRevision !== queueRevision) fail('De wachtrij is gewijzigd. Bekijk de bijgewerkte lijst en probeer opnieuw.', 409);
+      if (value.type === 'queue-refresh') {
+        if (!current() || value.trackId !== current().id || !Array.isArray(value.tracks) || value.tracks.length !== 1) fail('Het huidige nummer is gewijzigd.', 409);
+        const replacement = track(value.tracks[0], index);
+        if (replacement.sourceId !== current().sourceId) fail('Het huidige nummer is gewijzigd.', 409);
+        replacement.id = current().id;
+        queue[index] = replacement; loadAt(index, position, true);
+      } else if (value.type === 'queue-add') {
+        if (!Array.isArray(value.tracks) || !value.tracks.length || queue.length + value.tracks.length > 100 ||
+            ['next', 'last'].indexOf(value.placement) < 0) fail('Kies nummers en een plaats; maximaal 100 nummers.');
+        const additions = uniqueTracks(value.tracks, queue);
+        const at = value.placement === 'next' && current() ? index + 1 : queue.length;
+        queue.splice.apply(queue, [at, 0].concat(additions));
+        if (index < 0) loadAt(0, 0, true);
+        else { queueRevision++; enqueue('queue'); }
+      } else if (value.type === 'queue-reorder') {
+        if (!Array.isArray(value.ids) || value.ids.length !== queue.length || new Set(value.ids).size !== queue.length ||
+            value.ids.some(id => typeof id !== 'string' || !queue.some(item => item.id === id))) fail('Ongeldige wachtrijvolgorde.');
+        const playingId = current() && current().id;
+        queue = value.ids.map(id => queue.find(item => item.id === id));
+        index = playingId ? queue.findIndex(item => item.id === playingId) : -1;
+        queueRevision++; enqueue('queue');
+      } else {
+        const target = queue.findIndex(item => item.id === value.trackId);
+        if (target < 0) fail('Dit nummer staat niet meer in de wachtrij.', 409);
+        if (value.type === 'queue-play') loadAt(target, 0, true);
+        else {
+          const wasCurrent = target === index, shouldPlay = desiredPlaying;
+          queue.splice(target, 1);
+          if (!queue.length) {
+            index = -1; position = 0; duration = 0; state = 'idle'; error = ''; desiredPlaying = false;
+            generation++; queueRevision++; enqueue('stop');
+          } else if (wasCurrent) {
+            // Removing the final playing item prepares the preceding item paused.
+            loadAt(Math.min(target, queue.length - 1), 0, target < queue.length && shouldPlay);
+          } else {
+            if (target < index) index--;
+            queueRevision++; enqueue('queue');
+          }
+        }
+      }
     } else if (value.type === 'artwork') {
       if (!Number.isSafeInteger(value.generation) || typeof value.trackId !== 'string' ||
           !Number.isSafeInteger(value.artworkRevision) || value.artworkRevision < 1) fail('Ongeldige coverupdate.');
@@ -132,6 +201,8 @@ function makeReceiver(options) {
       if (!current()) fail('Kies eerst een nummer.');
       if (value.type === 'play' || value.type === 'pause') {
         desiredPlaying = value.type === 'play'; enqueue(value.type);
+      } else if (value.type === 'retry') {
+        loadAt(index, position, true);
       } else if (value.type === 'seek') {
         if (!finite(value.position, 0, 604800)) fail('Ongeldige afspeelpositie.');
         position = duration > 0 ? Math.min(duration, value.position) : value.position;
@@ -143,10 +214,10 @@ function makeReceiver(options) {
         else { desiredPlaying = false; enqueue('pause'); }
       } else if (value.type === 'stop') {
         desiredPlaying = false; state = 'idle'; queue = []; index = -1; position = 0; duration = 0;
-        generation++; enqueue('stop');
+        generation++; queueRevision++; enqueue('stop');
       } else fail('Onbekende opdracht.');
     }
-    return { accepted: true, generation, revision, sequence };
+    return { accepted: true, generation, revision, sequence, queueRevision };
   }
   function addresses() {
     if (options.addresses) return options.addresses;
@@ -171,7 +242,7 @@ function makeReceiver(options) {
   }
   function bearer(request) { const match = /^Bearer ([a-f0-9]{64})$/.exec(request.headers.authorization || ''); return match && match[1]; }
   function displayAuth(request) { return loopback(request.socket.remoteAddress) && equal(bearer(request), displayToken); }
-  function remoteAuth(request) { const token = bearer(request); return token && sessions.has(token); }
+  function remoteAuth(request) { const token = bearer(request); return token && sessions.has(sessionKey(token)); }
   function originCheck(request) {
     const origin = request.headers.origin;
     if (!origin) return; // Native sender has no browser Origin header.
@@ -229,7 +300,7 @@ function makeReceiver(options) {
           if (!online()) fail('Open eerst Resona TV op de televisie.', 409);
           if (sessions.size >= 8) fail('Er zijn al acht apparaten gekoppeld. Vernieuw de koppeling op de tv.', 409);
           const token = crypto.randomBytes(32).toString('hex');
-          sessions.set(token, String(data.name || 'iPhone').slice(0, 100));
+          sessions.set(sessionKey(token), String(data.name || 'iPhone').slice(0, 100)); saveSessions();
           changed(); return respond(response, 200, { token, name: 'Resona TV', protocol: 1 });
         }
         if (route === '/api/display/report') {
@@ -248,7 +319,7 @@ function makeReceiver(options) {
         }
         if (route === '/api/pair/reset') {
           if (!displayAuth(request)) fail('Vernieuw de koppeling op de tv.', 403);
-          sessions.clear(); failures.clear(); newCode(); changed(); return respond(response, 200, { accepted: true });
+          sessions.clear(); saveSessions(); failures.clear(); newCode(); changed(); return respond(response, 200, { accepted: true });
         }
         if (route === '/api/command') {
           if (!displayAuth(request) && !remoteAuth(request)) fail('Koppel je iPhone eerst met de tv.', 401);
@@ -258,11 +329,13 @@ function makeReceiver(options) {
       }
       if (request.method === 'GET' && route === '/api/state') {
         if (!remoteAuth(request) && !displayAuth(request)) fail('Koppel je iPhone eerst met de tv.', 401);
-        return respond(response, 200, snapshot(false));
+        const value = snapshot(false);
+        if (parsed.searchParams.get('compact') === '1' && value.track) value.track.artworkUrl = value.track.artworkRemoteUrl;
+        return respond(response, 200, value);
       }
       if (request.method === 'DELETE' && route === '/api/session') {
         originCheck(request); if (!remoteAuth(request)) fail('Niet gekoppeld.', 401);
-        sessions.delete(bearer(request)); changed(); return respond(response, 200, { accepted: true });
+        sessions.delete(sessionKey(bearer(request))); saveSessions(); changed(); return respond(response, 200, { accepted: true });
       }
       if (request.method === 'GET' && staticFiles[route]) {
         const entry = staticFiles[route], bytes = fs.readFileSync(path.join(__dirname, entry[0]));
