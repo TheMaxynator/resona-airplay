@@ -26,6 +26,10 @@ import com.savoo.scclient.di.appModule
 import com.savoo.scclient.player.AudioPlayer
 import com.savoo.scclient.player.IosAudioPlayer
 import com.savoo.scclient.player.PlayerController
+import com.savoo.scclient.player.TVRemoteSession
+import com.savoo.scclient.data.model.Track
+import com.savoo.scclient.data.model.User
+import platform.Foundation.NSNumber
 import com.savoo.scclient.ui.navigation.TVConnectLauncher
 import com.savoo.scclient.work.AutoExportManager
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +55,8 @@ private val iosModule = module {
 private var started = false
 private var bridgeWebView: WebView? = null
 private var tvQueueObserver: NSObjectProtocol? = null
+private var tvStateObserver: NSObjectProtocol? = null
+private var tvLocalObserver: NSObjectProtocol? = null
 
 @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
 private fun installCrashLogger() {
@@ -85,6 +91,23 @@ private fun startApp() {
     val koin = KoinPlatform.getKoin()
     TVConnectLauncher.open = {
         NSNotificationCenter.defaultCenter.postNotificationName("ResonaOpenTVSettings", null)
+    }
+    TVRemoteSession.send = { json ->
+        NSNotificationCenter.defaultCenter.postNotificationName("ResonaTVRemoteCommand", null, mapOf<Any?, Any?>("json" to json))
+    }
+    tvStateObserver = NSNotificationCenter.defaultCenter.addObserverForName(
+        "ResonaTVRemoteState", null, NSOperationQueue.mainQueue,
+    ) { note -> (note?.userInfo?.get("json") as? String)?.let(TVRemoteSession::update) }
+    tvLocalObserver = NSNotificationCenter.defaultCenter.addObserverForName(
+        "ResonaTVReturnLocal", null, NSOperationQueue.mainQueue,
+    ) { note ->
+        val data = note?.userInfo ?: return@addObserverForName
+        val source = (data["sourceId"] as? String)?.toLongOrNull() ?: return@addObserverForName
+        val position = (data["position"] as? NSNumber)?.doubleValue ?: 0.0
+        val track = Track(id = source, title = data["title"] as? String ?: "",
+            user = User(username = data["artist"] as? String ?: ""), artworkUrl = data["artworkUrl"] as? String)
+        TVRemoteSession.update("{\"active\":false}")
+        koin.get<PlayerController>().playQueue(listOf(track), startExact = false, startPositionMs = (position.coerceAtLeast(0.0) * 1000).toLong())
     }
     tvQueueObserver = NSNotificationCenter.defaultCenter.addObserverForName(
         "ResonaTVQueueRequest", null, NSOperationQueue.mainQueue,
