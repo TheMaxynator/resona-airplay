@@ -4,6 +4,14 @@ Version **0.1.0**, a hardware-test candidate for webOS 23. The television plays 
 
 ## Install and try
 
+For installation and future updates through **Homebrew Channel**, add this repository under Settings → Add repository:
+
+```text
+https://raw.githubusercontent.com/TheMaxynator/resona-airplay/main/repo.json
+```
+
+It lists Resona TV with its version, root requirement, icon, release download and SHA-256 checksum. New versions are published only after the receiver, Node 12 and browser checks pass. Refresh Homebrew Channel's app list to discover updates. Published IPKs are kept immutable: increment `app/appinfo.json` for a new application version. The publisher updates the index using the already-published bytes on retries. The first release is labelled as a test/pre-release on GitHub.
+
 1. Use your existing rooted-TV connection in [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) to install `com.themaxynator.resonatv_0.1.0_all.ipk`.
 2. Ensure Homebrew Channel is installed and working as root. Launch **Resona TV** on the television. The app starts its bundled receiver through Homebrew Channel's documented `exec` method. No boot hook or firewall changes are installed.
 3. The TV shows a six-digit code and an address/QR code. Keep the TV app open. Your iPhone and TV need the same reachable home network. If no IP can be detected, look up the TV's IPv4 address in its network settings; use `http://TV-IP:42700/remote`.
